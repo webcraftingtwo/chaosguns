@@ -1,1 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="DEAD DROP — operator intel network. Need-to-know access only.">
+  <title>DEAD DROP // ACCESS TERMINAL</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
 
+  <!-- CRT layer: scanlines + vignette, always on, very quiet -->
+  <div class="crt" aria-hidden="true"></div>
+
+  <!-- ============ BOOT SEQUENCE ============ -->
+  <div id="boot" class="boot">
+    <div class="boot-inner">
+      <div id="boot-lines" class="boot-lines" aria-live="polite"></div>
+      <div class="boot-cursor" aria-hidden="true"></div>
+    </div>
+    <button id="boot-skip" class="boot-skip" type="button">[ SKIP ]</button>
+  </div>
+
+  <!-- ============ ACCESS TERMINAL (gate) ============ -->
+  <main id="gate" class="gate hidden">
+    <div class="panel gate-panel">
+      <header class="gate-head">
+        <div class="gate-sig">DEAD DROP</div>
+        <div class="gate-sub">OPERATOR INTEL NETWORK // NEED-TO-KNOW BASIS ONLY</div>
+        <div class="gate-warn">UNAUTHORIZED ACCESS IS LOGGED AND TRACED</div>
+      </header>
+
+      <div class="tabs" role="tablist">
+        <button id="tab-auth" class="tab active" type="button" role="tab" aria-selected="true">AUTHENTICATE</button>
+        <button id="tab-enlist" class="tab" type="button" role="tab" aria-selected="false">ENLIST</button>
+      </div>
+
+      <div class="fields">
+        <label class="field">
+          <span class="field-label">CALLSIGN</span>
+          <input id="in-callsign" type="text" autocomplete="off" autocapitalize="characters"
+                 spellcheck="false" maxlength="16" placeholder="e.g. NIGHTJAR">
+        </label>
+
+        <label class="field" id="row-cipher" hidden>
+          <span class="field-label">EXTRACTION CIPHER</span>
+          <input id="in-cipher" type="text" autocomplete="off" autocapitalize="characters"
+                 spellcheck="false" maxlength="20" placeholder="DD-XXXX-XXXX-XXXX">
+        </label>
+
+        <label class="field" id="row-pass">
+          <span class="field-label" id="label-pass">PASSPHRASE</span>
+          <input id="in-pass" type="password" autocomplete="off" maxlength="64" placeholder="&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;">
+        </label>
+
+        <label class="field" id="row-confirm" hidden>
+          <span class="field-label">CONFIRM PASSPHRASE</span>
+          <input id="in-confirm" type="password" autocomplete="off" maxlength="64" placeholder="&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;&#9608;">
+        </label>
+      </div>
+
+      <p id="gate-msg" class="gate-msg" aria-live="assertive"></p>
+
+      <button id="gate-submit" class="btn-primary" type="button">AUTHENTICATE</button>
+
+      <button id="gate-recover" class="btn-ghost" type="button">
+        PASSPHRASE COMPROMISED? RECOVER VIA EXTRACTION CIPHER
+      </button>
+
+      <footer class="gate-foot">
+        <span>NO EMAIL. NO NAMES. CALLSIGN ONLY.</span>
+        <span class="gate-foot-id">TERMINAL 7C // RELAY ████</span>
+      </footer>
+    </div>
+  </main>
+
+  <!-- ============ ACCESS GRANTED flash ============ -->
+  <div id="flash" class="flash hidden" aria-hidden="true">
+    <div class="flash-stamp" id="flash-text">ACCESS GRANTED</div>
+  </div>
+
+  <!-- ============ EXTRACTION CIPHER hand-off ============ -->
+  <div id="cipher-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="cipher-title">
+    <div class="panel cipher-panel">
+      <div class="cipher-stamp">EYES ONLY</div>
+      <h2 id="cipher-title" class="cipher-title">EXTRACTION CIPHER ISSUED</h2>
+      <p class="cipher-brief">
+        This cipher is your <strong>only</strong> recovery path if your passphrase is lost.
+        It is shown <strong>once</strong>. It cannot be re-issued, retrieved, or reset.
+        Write it down. Off-network.
+      </p>
+      <div class="cipher-code" id="cipher-code">DD-0000-0000-0000</div>
+      <div class="cipher-actions">
+        <button id="cipher-copy" class="btn-ghost" type="button">COPY TO CLIPBOARD</button>
+        <button id="cipher-ack" class="btn-primary" type="button">CIPHER SECURED — PROCEED</button>
+      </div>
+      <p class="cipher-warn">LOSE THE CIPHER AND THE PASSPHRASE, AND THIS OPERATOR IS GONE FOR GOOD.</p>
+    </div>
+  </div>
+
+  <!-- ============ OPERATOR DOSSIER ============ -->
+  <section id="dossier" class="dossier hidden">
+    <header class="dossier-topbar decrypt">
+      <div class="topbar-left">
+        <span class="topbar-sig">DEAD DROP</span>
+        <span class="topbar-path">// OPERATOR DOSSIER</span>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-file" id="d-fileno">FILE ██-███</span>
+        <button id="btn-logout" class="btn-ghost btn-small" type="button">TERMINATE SESSION</button>
+      </div>
+    </header>
+
+    <div class="dossier-grid">
+
+      <!-- identity -->
+      <article class="panel id-panel decrypt">
+        <div class="stamp stamp-corner">NEED-TO-KNOW</div>
+        <div class="id-insignia" id="d-insignia" aria-hidden="true"></div>
+        <div class="id-main">
+          <div class="id-label">OPERATOR CALLSIGN</div>
+          <h1 class="id-callsign" id="d-callsign" data-scramble>CALLSIGN</h1>
+          <div class="id-row">
+            <span class="id-opid" id="d-opid" data-scramble>OP-0000-00</span>
+            <span class="id-status">STATUS: <b>ACTIVE</b></span>
+          </div>
+          <div class="id-row id-meta">
+            <span id="d-enlisted">ENLISTED --.--.----</span>
+            <span id="d-insignia-name">MARK: ----</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- clearance -->
+      <article class="panel clearance-panel decrypt">
+        <h2 class="panel-title">CLEARANCE</h2>
+        <div class="clearance-badge" id="d-clearance">RESTRICTED</div>
+        <div class="clearance-progress">
+          <div class="progress-head">
+            <span id="d-progress-label">NEXT REVIEW: CONFIDENTIAL</span>
+            <span id="d-progress-count">0 / 3</span>
+          </div>
+          <div class="progress-track"><div class="progress-fill" id="d-progress-fill"></div></div>
+          <p class="progress-note" id="d-progress-note">
+            CLEARANCE RISES WHEN YOUR FILED INTEL IS VERIFIED BY OTHER OPERATORS.
+          </p>
+        </div>
+      </article>
+
+      <!-- specialization -->
+      <article class="panel spec-panel decrypt">
+        <h2 class="panel-title">SPECIALIZATION</h2>
+        <div class="spec-value" id="d-spec">PENDING</div>
+        <p class="spec-note" id="d-spec-note">
+          DETERMINED BY FIELD ACTIVITY. FILE INTEL — THE NETWORK DECIDES WHAT YOU ARE.
+        </p>
+        <ul class="spec-classes" id="d-classes"></ul>
+      </article>
+
+      <!-- clearance ladder + teasers -->
+      <article class="panel ladder-panel decrypt">
+        <h2 class="panel-title">CLEARANCE LADDER <span class="panel-title-aside">FIVE TIERS // NEED-TO-KNOW ENFORCED</span></h2>
+        <ol class="ladder" id="d-ladder"></ol>
+      </article>
+
+    </div>
+
+    <footer class="dossier-foot decrypt">
+      <span>INTEL ARCHIVE: <b>UPLINK PENDING</b> — FIELD DATABASE SYNCS IN A LATER OPERATION</span>
+      <span class="foot-classified">CLASSIFIED // DO NOT DISTRIBUTE</span>
+    </footer>
+  </section>
+
+  <script src="js/seed.js"></script>
+  <script src="js/inteldb.js"></script>
+  <script src="js/fx.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
