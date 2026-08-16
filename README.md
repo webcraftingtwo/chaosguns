@@ -22,10 +22,37 @@ is unavailable outside a secure context.)
 | File | Role |
 | --- | --- |
 | `js/seed.js` | Pure functions. SHA-256 of the lowercased callsign → accent hue, operator ID (`OP-XXXX-NN`), insignia, and stable teaser numbers. Same callsign → identical dossier, nothing stored. |
-| `js/inteldb.js` | **The data layer.** All persistence behind async `intelDB` methods (`enlistOperator`, `authenticate`, `recoverWithCipher`, `getDossier`, `getClearanceLadder`, session). Currently a localStorage mock; every method carries a `SUPABASE SEAM` comment marking where real Supabase auth + Postgres (with clearance-enforcing RLS) drop in. The UI never touches storage directly. |
+| `js/config.js` | Relay coordinates: Supabase project URL + publishable key (safe to ship — it only opens the RPC surface). Blank them to run fully offline on the mock. |
+| `js/inteldb.js` | **The data layer.** All persistence behind async `intelDB` methods (`enlistOperator`, `authenticate`, `recoverWithCipher`, `getDossier`, `getClearanceLadder`, session). One facade, two backends: live Supabase RPC when `config.js` has coordinates, localStorage mock otherwise. The UI never touches storage or the network directly and cannot tell the backends apart. |
 | `js/fx.js` | Motion utilities: terminal typing, decrypt scramble, staggered materialize. Honors `prefers-reduced-motion`. |
 | `js/app.js` | Orchestration: boot → gate → ACCESS GRANTED → dossier reveal. UI only. |
 | `css/style.css` | Art direction. One seeded accent (`--accent-h`) themes the entire dossier. |
+
+## Backend (Supabase project `deaddrop-intel-network`)
+
+Auth is **callsign + passphrase in Postgres itself** — not Supabase email
+auth, which would break the no-email rule. The `deaddrop_core` migration
+defines:
+
+- `operators`, `sessions`, and an `intel_files` stub — all with **RLS enabled
+  and zero policies**, so the Data API cannot read or write them directly.
+- Five `SECURITY DEFINER` RPCs as the only door: `enlist_operator`,
+  `authenticate_operator`, `recover_operator`, `get_dossier`,
+  `terminate_session`. Passphrases and extraction ciphers are stored as
+  bcrypt hashes (pgcrypto); sessions are server-issued 48-hex tokens with a
+  30-day expiry. Burning a cipher (recovery) revokes all outstanding sessions.
+
+**Supabase linter note:** the security advisor flags "RLS enabled no policy"
+on the three tables and "anon can execute SECURITY DEFINER" on the five RPCs.
+Both are this design working as intended — the tables are meant to be
+unreachable and the RPCs are the deliberate public surface (enlist and
+authenticate must run before any sign-in exists). Helper functions
+(`_dossier`, `_new_cipher`, `_issue_session`) have EXECUTE revoked from
+`anon`/`authenticated`/`public`.
+
+Known gap, acceptable for this build: no rate limiting on the auth RPCs yet
+(bcrypt keeps brute force slow; an edge-function shim or captcha can wrap the
+RPCs later without touching the UI).
 
 ## Identity model
 

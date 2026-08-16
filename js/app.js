@@ -48,6 +48,8 @@
     BAD_PASS: 'PASSPHRASE MUST BE AT LEAST 6 CHARACTERS',
     PASS_MISMATCH: 'PASSPHRASE CONFIRMATION DOES NOT MATCH',
     BAD_CIPHER: 'ENTER THE FULL EXTRACTION CIPHER (DD-XXXX-XXXX-XXXX)',
+    RELAY_DOWN: 'RELAY UNREACHABLE — CHECK CONNECTION AND RETRY',
+    SESSION_INVALID: 'SESSION EXPIRED — RE-AUTHENTICATE',
   };
 
   const CLASS_DESCRIPTIONS = {
@@ -288,6 +290,12 @@
         <span class="cls-desc">${CLASS_DESCRIPTIONS[cls]}</span>
         <span class="cls-count">${count === 0 ? 'NO FILES' : `${count} FILES`}</span>`;
       classesEl.appendChild(li);
+    }
+
+    /* --- relay status footer --- */
+    if (intelDB.live) {
+      $('.dossier-foot span').innerHTML =
+        'RELAY LINK: <b>ESTABLISHED</b> — INTEL ARCHIVE OPENS IN A LATER OPERATION';
     }
 
     /* --- clearance ladder + teasers --- */

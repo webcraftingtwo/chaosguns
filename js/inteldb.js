@@ -1,19 +1,20 @@
 /* ============================================================
    inteldb.js — the DATA LAYER. All persistence lives here.
    ------------------------------------------------------------
-   The UI never talks to storage (or, later, Supabase) directly —
-   it only calls the async methods on `intelDB`.
+   The UI never talks to storage or the network directly — it
+   only calls the async methods on `intelDB`.
 
-   NOW:   mock implementation on localStorage.
-   LATER: Supabase (auth + Postgres with row-level security
-          enforcing clearance). Each method below carries a
-          `SUPABASE SEAM` comment showing where the real call
-          drops in. Swapping backends must not touch the UI.
+   Two backends behind one facade, chosen by DEADDROP_CONFIG:
 
-   Identity model is callsign + passphrase — no email, ever.
-   Passphrases and extraction ciphers are never stored in the
-   clear, only as SHA-256 digests (mock-grade; real hashing is
-   Supabase's job at the seam).
+   • REMOTE — Supabase. Callsign+passphrase auth runs entirely in
+     Postgres RPCs (SECURITY DEFINER, bcrypt via pgcrypto, session
+     tokens server-side). Tables carry RLS with no policies, so
+     the RPC surface is the only door. No email, ever.
+
+   • MOCK — localStorage. Offline fallback when no config is
+     present; also what local dev uses with no network.
+
+   Both return identical shapes; app.js cannot tell them apart.
    ============================================================ */
 
 'use strict';
@@ -22,56 +23,20 @@ const intelDB = (() => {
   const DB_KEY = 'deaddrop.db.v1';
   const SESSION_KEY = 'deaddrop.session.v1';
 
-  /* ---- clearance ladder definition (shared by mock + real) ---- */
+  /* ---- clearance ladder definition (shared) ---- */
   const TIERS = ['RESTRICTED', 'CONFIDENTIAL', 'SECRET', 'TOP SECRET', 'COMPARTMENTED'];
   // Verified files required to unlock each tier above RESTRICTED.
   const TIER_REQUIREMENTS = [0, 3, 8, 20, 50];
 
   const CLASSES = ['RECON', 'ENGINEER', 'ASSAULT', 'MEDIC'];
 
-  /* ---- mock store helpers ---- */
-  function loadDB() {
-    try {
-      return JSON.parse(localStorage.getItem(DB_KEY)) || { operators: {} };
-    } catch {
-      return { operators: {} };
-    }
-  }
-  function saveDB(db) {
-    localStorage.setItem(DB_KEY, JSON.stringify(db));
-  }
-
-  function normalizeCallsign(callsign) {
-    return String(callsign).trim().toLowerCase();
-  }
-
-  async function passDigest(callsign, passphrase) {
-    return sha256Hex(`${normalizeCallsign(callsign)}::${passphrase}`);
-  }
-  async function cipherDigest(callsign, cipher) {
-    return sha256Hex(`${normalizeCallsign(callsign)}##${cipher.replace(/\s+/g, '').toUpperCase()}`);
-  }
-
-  /** One-time recovery code, e.g. DD-K4T7-9XWM-P2RC (no ambiguous chars). */
-  function generateCipher() {
-    const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-    const raw = new Uint8Array(12);
-    (globalThis.crypto?.getRandomValues)
-      ? crypto.getRandomValues(raw)
-      : raw.forEach((_, i) => (raw[i] = Math.floor(Math.random() * 256)));
-    const chars = Array.from(raw, (b) => alphabet[b % alphabet.length]);
-    return `DD-${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8, 12).join('')}`;
-  }
-
-  function newRecordId() {
-    return globalThis.crypto?.randomUUID
-      ? crypto.randomUUID()
-      : `op-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  }
-
-  /* ---- public dossier shape (what the UI is allowed to see) ---- */
-  function toDossier(record) {
-    const contributions = record.contributions || {};
+  /* ============================================================
+     SHARED SHAPING — raw record → what the dossier panel renders.
+     Raw shape (both backends): { id, callsign, enlistedAt(ms),
+     clearanceIndex, verifiedCount, contributions }
+     ============================================================ */
+  function shapeDossier(raw) {
+    const contributions = raw.contributions || {};
     const total = CLASSES.reduce((sum, c) => sum + (contributions[c] || 0), 0);
 
     // Specialization is EMERGENT — computed from contribution mix,
@@ -85,125 +50,253 @@ const intelDB = (() => {
       specialization = { primary: ranked[0], secondary: ranked[1] };
     }
 
-    const clearanceIndex = record.clearanceIndex || 0;
-    const nextRequirement = TIER_REQUIREMENTS[clearanceIndex + 1] ?? null;
+    const clearanceIndex = raw.clearanceIndex || 0;
 
     return {
-      id: record.id,
-      callsign: record.callsign,
-      enlistedAt: record.enlistedAt,
+      id: raw.id,
+      callsign: raw.callsign,
+      enlistedAt: raw.enlistedAt,
       clearanceIndex,
       clearance: TIERS[clearanceIndex],
-      verifiedCount: record.verifiedCount || 0,
+      verifiedCount: raw.verifiedCount || 0,
       nextTier: TIERS[clearanceIndex + 1] || null,
-      nextRequirement,
+      nextRequirement: TIER_REQUIREMENTS[clearanceIndex + 1] ?? null,
       contributions,
       specialization,
     };
   }
 
+  /* ---- session memory (device-local under both backends) ---- */
+  function getSession() {
+    try {
+      return JSON.parse(localStorage.getItem(SESSION_KEY));
+    } catch {
+      return null;
+    }
+  }
+  function writeSession(data) {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(data));
+  }
+  function dropSession() {
+    localStorage.removeItem(SESSION_KEY);
+  }
+
   /* ============================================================
-     PUBLIC API — every method async, ready for the network hop.
+     REMOTE BACKEND — Supabase RPC over PostgREST
      ============================================================ */
+  function remoteBackend(cfg) {
+    // Server-issued session token for the current operator; persisted
+    // inside the session blob by setSession below.
+    let pendingToken = null;
+
+    async function rpc(fn, args) {
+      try {
+        const res = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${fn}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: cfg.supabaseKey,
+            Authorization: `Bearer ${cfg.supabaseKey}`,
+          },
+          body: JSON.stringify(args),
+        });
+        if (!res.ok) return { ok: false, code: 'RELAY_DOWN' };
+        return await res.json();
+      } catch {
+        return { ok: false, code: 'RELAY_DOWN' };
+      }
+    }
+
+    function acceptAuth(r) {
+      if (!r.ok) return r;
+      pendingToken = r.token || null;
+      const out = { ok: true, dossier: shapeDossier(r.dossier) };
+      if (r.cipher) out.cipher = r.cipher; // one-time hand-off, never stored
+      return out;
+    }
+
+    return {
+      async enlistOperator(callsign, passphrase) {
+        return acceptAuth(await rpc('enlist_operator', {
+          p_callsign: callsign, p_passphrase: passphrase,
+        }));
+      },
+
+      async authenticate(callsign, passphrase) {
+        return acceptAuth(await rpc('authenticate_operator', {
+          p_callsign: callsign, p_passphrase: passphrase,
+        }));
+      },
+
+      async recoverWithCipher(callsign, cipher, newPassphrase) {
+        return acceptAuth(await rpc('recover_operator', {
+          p_callsign: callsign, p_cipher: cipher, p_new_passphrase: newPassphrase,
+        }));
+      },
+
+      async getDossier() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        const r = await rpc('get_dossier', { p_token: session.token });
+        return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
+      },
+
+      setSession(operatorId, callsign) {
+        writeSession({ operatorId, callsign, token: pendingToken || getSession()?.token || null });
+        pendingToken = null;
+      },
+
+      clearSession() {
+        const session = getSession();
+        dropSession();
+        if (session?.token) {
+          rpc('terminate_session', { p_token: session.token }); // fire and forget
+        }
+      },
+    };
+  }
+
+  /* ============================================================
+     MOCK BACKEND — localStorage (offline fallback)
+     ============================================================ */
+  function mockBackend() {
+    function loadDB() {
+      try {
+        return JSON.parse(localStorage.getItem(DB_KEY)) || { operators: {} };
+      } catch {
+        return { operators: {} };
+      }
+    }
+    function saveDB(db) {
+      localStorage.setItem(DB_KEY, JSON.stringify(db));
+    }
+
+    function norm(callsign) {
+      return String(callsign).trim().toLowerCase();
+    }
+
+    async function passDigest(callsign, passphrase) {
+      return sha256Hex(`${norm(callsign)}::${passphrase}`);
+    }
+    async function cipherDigest(callsign, cipher) {
+      return sha256Hex(`${norm(callsign)}##${cipher.replace(/\s+/g, '').toUpperCase()}`);
+    }
+
+    function generateCipher() {
+      const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+      const raw = new Uint8Array(12);
+      (globalThis.crypto?.getRandomValues)
+        ? crypto.getRandomValues(raw)
+        : raw.forEach((_, i) => (raw[i] = Math.floor(Math.random() * 256)));
+      const chars = Array.from(raw, (b) => alphabet[b % alphabet.length]);
+      return `DD-${chars.slice(0, 4).join('')}-${chars.slice(4, 8).join('')}-${chars.slice(8, 12).join('')}`;
+    }
+
+    function toRaw(record) {
+      return {
+        id: record.id,
+        callsign: record.callsign,
+        enlistedAt: record.enlistedAt,
+        clearanceIndex: record.clearanceIndex || 0,
+        verifiedCount: record.verifiedCount || 0,
+        contributions: record.contributions || {},
+      };
+    }
+
+    return {
+      async enlistOperator(callsign, passphrase) {
+        const db = loadDB();
+        const key = norm(callsign);
+        if (db.operators[key]) return { ok: false, code: 'CALLSIGN_IN_SERVICE' };
+        const cipher = generateCipher();
+        const record = {
+          id: globalThis.crypto?.randomUUID
+            ? crypto.randomUUID()
+            : `op-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          callsign: String(callsign).trim(),
+          passHash: await passDigest(callsign, passphrase),
+          cipherHash: await cipherDigest(callsign, cipher),
+          enlistedAt: Date.now(),
+          clearanceIndex: 0,
+          verifiedCount: 0,
+          contributions: { RECON: 0, ENGINEER: 0, ASSAULT: 0, MEDIC: 0 },
+        };
+        db.operators[key] = record;
+        saveDB(db);
+        return { ok: true, dossier: shapeDossier(toRaw(record)), cipher };
+      },
+
+      async authenticate(callsign, passphrase) {
+        const db = loadDB();
+        const record = db.operators[norm(callsign)];
+        if (!record) return { ok: false, code: 'CALLSIGN_NOT_ON_FILE' };
+        if ((await passDigest(callsign, passphrase)) !== record.passHash) {
+          return { ok: false, code: 'CREDENTIALS_REJECTED' };
+        }
+        return { ok: true, dossier: shapeDossier(toRaw(record)) };
+      },
+
+      async recoverWithCipher(callsign, cipher, newPassphrase) {
+        const db = loadDB();
+        const record = db.operators[norm(callsign)];
+        if (!record) return { ok: false, code: 'CALLSIGN_NOT_ON_FILE' };
+        if ((await cipherDigest(callsign, cipher)) !== record.cipherHash) {
+          return { ok: false, code: 'CIPHER_REJECTED' };
+        }
+        const freshCipher = generateCipher();
+        record.passHash = await passDigest(callsign, newPassphrase);
+        record.cipherHash = await cipherDigest(callsign, freshCipher);
+        saveDB(db);
+        return { ok: true, dossier: shapeDossier(toRaw(record)), cipher: freshCipher };
+      },
+
+      async getDossier(operatorId) {
+        const id = operatorId || getSession()?.operatorId;
+        const db = loadDB();
+        const record = Object.values(db.operators).find((r) => r.id === id);
+        return record
+          ? { ok: true, dossier: shapeDossier(toRaw(record)) }
+          : { ok: false, code: 'SESSION_INVALID' };
+      },
+
+      setSession(operatorId, callsign) {
+        writeSession({ operatorId, callsign });
+      },
+
+      clearSession() {
+        dropSession();
+      },
+    };
+  }
+
+  /* ============================================================
+     FACADE
+     ============================================================ */
+  const cfg = globalThis.DEADDROP_CONFIG;
+  const live = Boolean(cfg?.supabaseUrl && cfg?.supabaseKey);
+  const backend = live ? remoteBackend(cfg) : mockBackend();
+
   return {
     TIERS,
     TIER_REQUIREMENTS,
     CLASSES,
+    live, // true when talking to the real relay
 
-    /**
-     * ENLIST — create a new operator. Returns the one-time
-     * extraction cipher exactly once; only its digest is kept.
-     *
-     * SUPABASE SEAM: becomes supabase.auth.signUp with a synthetic
-     * `${callsign}@ops.local` identity (callsign stays the only
-     * user-visible handle) + an `operators` row insert. Cipher hash
-     * stored in the row; RLS: operators can read only themselves.
-     */
-    async enlistOperator(callsign, passphrase) {
-      const db = loadDB();
-      const key = normalizeCallsign(callsign);
-      if (db.operators[key]) {
-        return { ok: false, code: 'CALLSIGN_IN_SERVICE' };
-      }
-      const cipher = generateCipher();
-      const record = {
-        id: newRecordId(),
-        callsign: String(callsign).trim(),
-        passHash: await passDigest(callsign, passphrase),
-        cipherHash: await cipherDigest(callsign, cipher),
-        enlistedAt: Date.now(),
-        clearanceIndex: 0,
-        verifiedCount: 0,
-        contributions: { RECON: 0, ENGINEER: 0, ASSAULT: 0, MEDIC: 0 },
-      };
-      db.operators[key] = record;
-      saveDB(db);
-      return { ok: true, dossier: toDossier(record), cipher };
-    },
-
-    /**
-     * AUTHENTICATE — returning operator.
-     *
-     * SUPABASE SEAM: becomes supabase.auth.signInWithPassword on the
-     * synthetic identity, then a select on `operators`.
-     */
-    async authenticate(callsign, passphrase) {
-      const db = loadDB();
-      const record = db.operators[normalizeCallsign(callsign)];
-      if (!record) return { ok: false, code: 'CALLSIGN_NOT_ON_FILE' };
-      const digest = await passDigest(callsign, passphrase);
-      if (digest !== record.passHash) {
-        return { ok: false, code: 'CREDENTIALS_REJECTED' };
-      }
-      return { ok: true, dossier: toDossier(record) };
-    },
-
-    /**
-     * RECOVER — extraction cipher is the ONLY recovery path.
-     * Burns the old cipher and issues a fresh one.
-     *
-     * SUPABASE SEAM: an edge function that verifies the cipher hash
-     * and resets the auth password server-side.
-     */
-    async recoverWithCipher(callsign, cipher, newPassphrase) {
-      const db = loadDB();
-      const record = db.operators[normalizeCallsign(callsign)];
-      if (!record) return { ok: false, code: 'CALLSIGN_NOT_ON_FILE' };
-      const digest = await cipherDigest(callsign, cipher);
-      if (digest !== record.cipherHash) {
-        return { ok: false, code: 'CIPHER_REJECTED' };
-      }
-      const freshCipher = generateCipher();
-      record.passHash = await passDigest(callsign, newPassphrase);
-      record.cipherHash = await cipherDigest(callsign, freshCipher);
-      saveDB(db);
-      return { ok: true, dossier: toDossier(record), cipher: freshCipher };
-    },
-
-    /**
-     * DOSSIER — full personal record for the dossier panel.
-     *
-     * SUPABASE SEAM: select from `operators` + aggregate over
-     * `intel_files` (contribution counts, verified counts). RLS
-     * enforces clearance on everything else.
-     */
-    async getDossier(operatorId) {
-      const db = loadDB();
-      const record = Object.values(db.operators).find((r) => r.id === operatorId);
-      return record ? { ok: true, dossier: toDossier(record) } : { ok: false, code: 'NOT_ON_FILE' };
-    },
+    enlistOperator: (cs, pw) => backend.enlistOperator(cs, pw),
+    authenticate: (cs, pw) => backend.authenticate(cs, pw),
+    recoverWithCipher: (cs, ci, pw) => backend.recoverWithCipher(cs, ci, pw),
+    getDossier: (operatorId) => backend.getDossier(operatorId),
 
     /**
      * CLEARANCE LADDER — the five tiers plus per-operator teaser
      * numbers for everything above the operator's level. Teaser
      * numbers are seeded from the callsign so they are concrete
-     * and stable, never random-per-visit.
-     *
-     * SUPABASE SEAM: real counts come from clearance-gated
-     * aggregate views (RLS returns counts, never contents).
+     * and stable, never random-per-visit. (When the community
+     * database lands, real counts come from clearance-gated
+     * aggregate views — RLS returns counts, never contents.)
      */
     async getClearanceLadder(operatorId) {
-      const res = await this.getDossier(operatorId);
+      const res = await backend.getDossier(operatorId);
       if (!res.ok) return res;
       const seed = await deriveSeed(res.dossier.callsign);
       const n = seed.teasers;
@@ -229,19 +322,8 @@ const intelDB = (() => {
       return { ok: true, ladder };
     },
 
-    /* ---- session (device memory, stays local even post-Supabase) ---- */
-    getSession() {
-      try {
-        return JSON.parse(localStorage.getItem(SESSION_KEY));
-      } catch {
-        return null;
-      }
-    },
-    setSession(operatorId, callsign) {
-      localStorage.setItem(SESSION_KEY, JSON.stringify({ operatorId, callsign }));
-    },
-    clearSession() {
-      localStorage.removeItem(SESSION_KEY);
-    },
+    getSession,
+    setSession: (id, cs) => backend.setSession(id, cs),
+    clearSession: () => backend.clearSession(),
   };
 })();
