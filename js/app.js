@@ -100,9 +100,14 @@
     const seenBefore = localStorage.getItem('deaddrop.boot.seen') === '1';
     const skip = { now: seenBefore && FX.reducedMotion };
 
-    const skipNow = () => { skip.now = true; };
+    const skipNow = () => { skip.now = true; el.boot.classList.add('rushed'); };
     el.bootSkip.addEventListener('click', skipNow);
     window.addEventListener('keydown', skipNow, { once: true });
+
+    // Let the emblem draw before the log starts (skippable, and
+    // returning operators get a shorter beat).
+    if (seenBefore) el.boot.classList.add('rushed');
+    if (!skip.now && !FX.reducedMotion) await FX.wait(seenBefore ? 260 : 1250);
 
     // Returning operators get a faster cadence; anyone can skip.
     await FX.typeSequence(el.bootLines, BOOT_LINES, skip, {
@@ -199,7 +204,17 @@
         // then the reveal is the payoff.
         await showCipherHandoff(res.cipher, mode === 'recover');
       }
-      await enterDossier(res.dossier, mode === 'enlist' ? 'CLEARANCE GRANTED' : 'ACCESS GRANTED');
+      await enterDossier(
+        res.dossier,
+        mode === 'enlist' ? 'CLEARANCE GRANTED' : 'ACCESS GRANTED',
+        mode === 'enlist'
+          ? ['> OPERATOR RECORD CREATED',
+             '> CLEARANCE ASSIGNED — RESTRICTED',
+             '> BUILDING DOSSIER…']
+          : ['> IDENTITY CONFIRMED',
+             '> CLEARANCE VERIFIED',
+             '> DECRYPTING DOSSIER…']
+      );
     } finally {
       el.gateSubmit.disabled = false;
     }
@@ -236,17 +251,48 @@
      ACCESS GRANTED → DOSSIER REVEAL
      ============================================================ */
 
-  async function enterDossier(dossier, stampText) {
+  /**
+   * The ACCESS GRANTED beat. Paced deliberately: the stamp lands,
+   * the terminal reports what it is doing, then the frame collapses
+   * — it must never blink in and out.
+   */
+  async function flashStamp(stampText, steps = []) {
+    el.flashText.textContent = stampText;
+    const stepsEl = $('#flash-steps');
+    stepsEl.innerHTML = '';
+    el.flash.classList.remove('hidden', 'closing');
+
+    if (FX.reducedMotion) {
+      steps.forEach((s) => {
+        const d = document.createElement('div');
+        d.className = 'boot-line done';
+        d.textContent = s;
+        stepsEl.appendChild(d);
+      });
+      await FX.wait(600);
+    } else {
+      await FX.wait(640);                       // stamp lands and settles
+      await FX.typeSequence(stepsEl, steps, { now: false }, {
+        charDelay: 7, lineDelay: 120,
+      });
+      stepsEl.querySelectorAll('.boot-line').forEach((n) => n.classList.add('done'));
+      await FX.wait(420);                       // hold on the finished state
+    }
+
+    el.flash.classList.add('closing');
+    await FX.wait(FX.reducedMotion ? 60 : 430); // frame collapses
+    el.flash.classList.add('hidden');
+    el.flash.classList.remove('closing');
+  }
+
+  async function enterDossier(dossier, stampText, steps) {
     const seed = await deriveSeed(dossier.callsign);
     applyAccent(seed.hue);
 
     el.gate.classList.add('hidden');
 
     // The decisive beat.
-    el.flashText.textContent = stampText;
-    el.flash.classList.remove('hidden');
-    await FX.wait(FX.reducedMotion ? 400 : 1150);
-    el.flash.classList.add('hidden');
+    await flashStamp(stampText, steps);
 
     // Anything that happened while the operator was away lands first.
     const disp = await intelDB.getDispatches();
@@ -474,10 +520,11 @@
       }
       // the last promotion gets the full ceremony
       el.dossier.classList.add('hidden');
-      el.flashText.textContent = 'COMPARTMENTED';
-      el.flash.classList.remove('hidden');
-      await FX.wait(FX.reducedMotion ? 400 : 1150);
-      el.flash.classList.add('hidden');
+      await flashStamp('COMPARTMENTED', [
+        '> KEY VERIFIED AND BURNED',
+        '> COMPARTMENT OPENED — EYES ONLY',
+        '> RESEALING DOSSIER…',
+      ]);
       el.dossier.classList.remove('hidden');
       await renderDossier(res.dossier, currentSeed);
     } finally {
@@ -548,6 +595,7 @@
     buildTierPicker();
     buildFilterChips();
     buildTagControls();
+    buildMapPicker();
 
     const blocks = archiveEl.querySelectorAll('.decrypt');
     blocks.forEach((b) => b.classList.remove('decrypted'));
@@ -560,10 +608,22 @@
   function setChannel(next) {
     channel = next;
     const inCompartment = channel === 'compartment';
-    $('#ch-network').classList.toggle('active', !inCompartment);
-    $('#ch-network').setAttribute('aria-selected', String(!inCompartment));
-    $('#ch-compartment').classList.toggle('active', inCompartment);
-    $('#ch-compartment').setAttribute('aria-selected', String(inCompartment));
+    const inMap = channel === 'map';
+
+    for (const [id, on] of [
+      ['#ch-network', channel === 'network'],
+      ['#ch-compartment', inCompartment],
+      ['#ch-map', inMap],
+    ]) {
+      $(id).classList.toggle('active', on);
+      $(id).setAttribute('aria-selected', String(on));
+    }
+
+    // the map is its own layout; the composer/feed grid stands down
+    $('#map-wrap').classList.toggle('hidden', !inMap);
+    document.querySelector('.archive-grid').classList.toggle('hidden', inMap);
+    if (inMap) return;
+
     $('#feed-panel').classList.toggle('compartment', inCompartment);
 
     const insider = currentDossier.clearanceIndex === 4;
@@ -652,7 +712,8 @@
     try {
       const res = await intelDB.fileIntel(
         pickedClass, title, body, tier,
-        $('#c-map').value || null, pickedMode
+        $('#c-map').value || null, pickedMode,
+        $('#c-map').value ? ($('#c-zone').value || null) : null
       );
       if (!res.ok) return composeMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
       currentDossier = res.dossier;
@@ -707,6 +768,154 @@
         o.textContent = m;
         filterSel.appendChild(o);
       }
+    }
+    syncZonePicker();
+  }
+
+  /* Zone options come from the theater's schematic — a drop can only
+     be pinned to a zone that exists on the map. */
+  function syncZonePicker() {
+    const map = $('#c-map').value;
+    const row = $('#c-zone-row');
+    const sel = $('#c-zone');
+    const schematic = MAP_SCHEMATICS[map];
+    row.hidden = !schematic || channel === 'compartment';
+    sel.innerHTML = '<option value="">— ANYWHERE ON THE MAP —</option>';
+    if (!schematic) return;
+    for (const z of schematic.zones) {
+      const o = document.createElement('option');
+      o.value = z.name;
+      o.textContent = z.name;
+      sel.appendChild(o);
+    }
+  }
+
+  /* ============================================================
+     THEATER MAP — clickable schematic wired to the archive
+     ============================================================ */
+
+  let mapName = Object.keys(MAP_SCHEMATICS)[0];
+  let selectedZone = null;
+
+  function buildMapPicker() {
+    const sel = $('#map-pick');
+    if (sel.options.length) return;
+    for (const name of Object.keys(MAP_SCHEMATICS)) {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = name;
+      sel.appendChild(o);
+    }
+    // theaters with no schematic drawn yet — visible, not selectable
+    for (const m of intelDB.MAPS) {
+      if (MAP_SCHEMATICS[m]) continue;
+      const o = document.createElement('option');
+      o.value = m;
+      o.textContent = `${m} — NO SCHEMATIC ON FILE`;
+      o.disabled = true;
+      sel.appendChild(o);
+    }
+    sel.value = mapName;
+  }
+
+  /* Schematic content comes from maps.js (ours), so template
+     assembly here is safe; operator text never enters the SVG. */
+  function renderMapStage() {
+    const schematic = MAP_SCHEMATICS[mapName];
+    const stage = $('#map-stage');
+    $('#map-title').textContent = mapName;
+    if (!schematic) {
+      stage.innerHTML = '<div class="feed-empty">NO SCHEMATIC ON FILE FOR THIS THEATER.</div>';
+      return;
+    }
+    $('#map-scale').textContent = schematic.scale || '';
+    $('#map-caption').textContent = schematic.caption || '';
+
+    const files = (feedCache?.files || []).filter((f) => f.map === mapName);
+    const parts = [`<svg viewBox="${schematic.viewBox}" role="img" aria-label="${mapName} tactical schematic">`,
+                   schematic.decor];
+
+    for (const z of schematic.zones) {
+      const zoneFiles = files.filter((f) => f.zone === z.name);
+      const withheld = zoneFiles.filter((f) => f.locked).length;
+      const cls = ['map-zone'];
+      if (zoneFiles.length) cls.push('has-intel');
+      if (zoneFiles.length && withheld === zoneFiles.length) cls.push('locked-only');
+      if (selectedZone === z.name) cls.push('selected');
+      const count = zoneFiles.length === 0
+        ? 'NO INTEL'
+        : `${zoneFiles.length} FILE${zoneFiles.length === 1 ? '' : 'S'}` +
+          (withheld ? ` // ${withheld} WITHHELD` : '');
+      parts.push(
+        `<polygon class="${cls.join(' ')}" data-zone="${z.name}" points="${z.points}">`,
+        `<title>${z.name}</title></polygon>`,
+        `<text class="map-zone-label" x="${z.label[0]}" y="${z.label[1]}">${z.name}</text>`,
+        `<text class="map-zone-count${zoneFiles.length ? '' : ' none'}" x="${z.label[0]}" y="${z.label[1] + 19}">${count}</text>`
+      );
+    }
+
+    for (const ex of schematic.extracts || []) {
+      const [x, y] = ex.at;
+      const rightSide = x > Number(schematic.viewBox.split(' ')[2]) / 2;
+      parts.push(
+        `<path class="map-extract" d="M${x - 9},${y} L${x},${y - 9} L${x + 9},${y} L${x},${y + 9} Z"/>`,
+        `<text class="map-extract-label" x="${rightSide ? x - 14 : x + 14}" y="${y + 4}"` +
+        `${rightSide ? ' text-anchor="end"' : ''}>${ex.name}</text>`
+      );
+    }
+
+    parts.push('</svg>');
+    stage.innerHTML = parts.join('');
+    stage.querySelectorAll('.map-zone').forEach((node) =>
+      node.addEventListener('click', () => selectZone(node.dataset.zone))
+    );
+  }
+
+  function selectZone(name) {
+    selectedZone = selectedZone === name ? null : name;
+    renderMapStage();
+    renderZoneFeed();
+  }
+
+  function renderZoneFeed() {
+    const list = $('#zone-feed');
+    list.innerHTML = '';
+    const files = (feedCache?.files || []).filter((f) => f.map === mapName);
+
+    if (!selectedZone) {
+      $('#zone-title').textContent = 'ZONE INTEL';
+      $('#zone-count').textContent = `${files.length} FILE${files.length === 1 ? '' : 'S'} ACROSS THIS THEATER`;
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = files.length
+        ? 'SELECT A ZONE ON THE SCHEMATIC TO PULL ITS INTEL.'
+        : 'NO INTEL FILED IN THIS THEATER YET. TAG A DROP WITH IT AND IT LANDS ON THE MAP.';
+      list.appendChild(li);
+      return;
+    }
+
+    const zoneFiles = files.filter((f) => f.zone === selectedZone);
+    const withheld = zoneFiles.filter((f) => f.locked).length;
+    $('#zone-title').textContent = selectedZone;
+    $('#zone-count').textContent = zoneFiles.length
+      ? `${zoneFiles.length} FILE${zoneFiles.length === 1 ? '' : 'S'}${withheld ? ` // ${withheld} WITHHELD` : ''}`
+      : 'NOTHING ON FILE';
+
+    const brief = document.createElement('li');
+    brief.className = 'zone-brief';
+    brief.textContent = `${mapName} // ${selectedZone} — TAP THE ZONE AGAIN TO CLEAR.`;
+    list.appendChild(brief);
+
+    if (zoneFiles.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = 'NO INTEL PINNED TO THIS ZONE. BE THE FIRST TO WALK IT.';
+      list.appendChild(li);
+      return;
+    }
+    const rerender = async () => { await refreshFeed(); renderMapStage(); renderZoneFeed(); };
+    for (const f of zoneFiles) {
+      list.appendChild(f.locked ? lockedDropRow(f) : dropRow(f, rerender));
     }
   }
 
@@ -842,7 +1051,7 @@
       span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
     );
     if (f.isBurned) head.append(span('burn-stamp', 'BURN NOTICE'));
-    if (f.map) head.append(span('drop-tag', f.map));
+    if (f.map) head.append(span('drop-tag', f.zone ? `${f.map} // ${f.zone}` : f.map));
     if (f.mode) head.append(span('drop-tag', f.mode));
     const author = span('drop-author', '');
     author.append('BY ');
@@ -1026,7 +1235,7 @@
       span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
     );
     // tags survive redaction: you may know WHERE, never WHAT
-    if (f.map) head.append(span('drop-tag', f.map));
+    if (f.map) head.append(span('drop-tag', f.zone ? `${f.map} // ${f.zone}` : f.map));
     if (f.mode) head.append(span('drop-tag', f.mode));
     head.append(
       span('drop-author', 'AUTHOR WITHHELD'),
@@ -1287,8 +1496,22 @@
   $('#btn-archive').addEventListener('click', openArchive);
   $('#btn-to-dossier').addEventListener('click', closeArchive);
   $('#c-submit').addEventListener('click', onTransmit);
-  $('#ch-network').addEventListener('click', () => { setChannel('network'); buildTierPicker(); renderFeed(); });
-  $('#ch-compartment').addEventListener('click', () => { setChannel('compartment'); buildTierPicker(); renderFeed(); });
+  $('#ch-network').addEventListener('click', () => {
+    setChannel('network'); buildTierPicker(); syncZonePicker(); renderFeed();
+  });
+  $('#ch-compartment').addEventListener('click', () => {
+    setChannel('compartment'); buildTierPicker(); syncZonePicker(); renderFeed();
+  });
+  $('#ch-map').addEventListener('click', () => {
+    setChannel('map'); renderMapStage(); renderZoneFeed();
+  });
+  $('#map-pick').addEventListener('change', (e) => {
+    mapName = e.target.value;
+    selectedZone = null;
+    renderMapStage();
+    renderZoneFeed();
+  });
+  $('#c-map').addEventListener('change', syncZonePicker);
   $('#f-search').addEventListener('input', renderFeed);
   $('#f-map').addEventListener('change', renderFeed);
   $('#btn-roster').addEventListener('click', openRoster);
@@ -1311,7 +1534,13 @@
     if (session) {
       const res = await intelDB.getDossier(session.operatorId);
       if (res.ok) {
-        await enterDossier(res.dossier, `WELCOME BACK, ${res.dossier.callsign.toUpperCase()}`);
+        await enterDossier(
+          res.dossier,
+          `WELCOME BACK, ${res.dossier.callsign.toUpperCase()}`,
+          ['> SESSION TOKEN ACCEPTED',
+           `> STANDING: ${res.dossier.clearance}`,
+           '> DECRYPTING DOSSIER…']
+        );
         return;
       }
       intelDB.clearSession();

@@ -7,7 +7,7 @@
   <title>DEAD DROP // ACCESS TERMINAL</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
   <!-- ?v= is bumped on every deploy so phones never mix new HTML with stale cached scripts -->
-  <link rel="stylesheet" href="css/style.css?v=7">
+  <link rel="stylesheet" href="css/style.css?v=8">
 </head>
 <body>
 
@@ -17,6 +17,22 @@
   <!-- ============ BOOT SEQUENCE ============ -->
   <div id="boot" class="boot">
     <div class="boot-inner">
+      <!-- cold-boot emblem: original insignia drawn for this terminal,
+           strokes drawn on by CSS, then the wordmark resolves -->
+      <div class="boot-mark" aria-hidden="true">
+        <svg class="boot-emblem" viewBox="0 0 120 120" fill="none" stroke="currentColor">
+          <circle class="bm-ring" cx="60" cy="60" r="52" stroke-width="1.5" opacity="0.55"/>
+          <circle class="bm-ring bm-ring-2" cx="60" cy="60" r="42" stroke-width="0.8" opacity="0.35"/>
+          <path class="bm-delta" d="M60 22 L94 86 H26 Z" stroke-width="3"/>
+          <path class="bm-bar" d="M42 70 H78" stroke-width="2.4"/>
+          <path class="bm-stem" d="M60 38 V58" stroke-width="2.4"/>
+          <path class="bm-tick" d="M60 6 V18 M60 102 V114 M6 60 H18 M102 60 H114" stroke-width="1.6"/>
+        </svg>
+        <div class="boot-word">
+          <div class="boot-word-main" id="boot-word">DEAD DROP</div>
+          <div class="boot-word-sub">OPERATOR INTEL NETWORK</div>
+        </div>
+      </div>
       <div id="boot-lines" class="boot-lines" aria-live="polite"></div>
       <div class="boot-cursor" aria-hidden="true"></div>
     </div>
@@ -78,7 +94,12 @@
 
   <!-- ============ ACCESS GRANTED flash ============ -->
   <div id="flash" class="flash hidden" aria-hidden="true">
-    <div class="flash-stamp" id="flash-text">ACCESS GRANTED</div>
+    <div class="flash-inner">
+      <div class="flash-rule"></div>
+      <div class="flash-stamp" id="flash-text">ACCESS GRANTED</div>
+      <div class="flash-rule"></div>
+      <div class="flash-steps" id="flash-steps"></div>
+    </div>
   </div>
 
   <!-- ============ EXTRACTION CIPHER hand-off ============ -->
@@ -201,6 +222,31 @@
     <div class="archive-channels decrypt" role="tablist">
       <button id="ch-network" class="tab active" type="button" role="tab" aria-selected="true">NETWORK DROPS</button>
       <button id="ch-compartment" class="tab" type="button" role="tab" aria-selected="false">THE COMPARTMENT</button>
+      <button id="ch-map" class="tab" type="button" role="tab" aria-selected="false">THEATER MAP</button>
+    </div>
+
+    <!-- theater map: clickable schematic + per-zone intel -->
+    <div class="map-wrap decrypt hidden" id="map-wrap">
+      <article class="panel map-panel">
+        <h2 class="panel-title">
+          <span id="map-title">ZERO DAM</span>
+          <span class="panel-title-aside" id="map-scale"></span>
+        </h2>
+        <div class="map-select-row">
+          <select id="map-pick" aria-label="theater schematic"></select>
+          <span class="map-hint" id="map-hint">SELECT A ZONE TO PULL ITS INTEL</span>
+        </div>
+        <div class="map-stage" id="map-stage"></div>
+        <p class="map-caption" id="map-caption"></p>
+      </article>
+
+      <article class="panel map-intel-panel">
+        <h2 class="panel-title">
+          <span id="zone-title">ZONE INTEL</span>
+          <span class="panel-title-aside" id="zone-count"></span>
+        </h2>
+        <ul class="feed" id="zone-feed"></ul>
+      </article>
     </div>
 
     <div class="archive-grid">
@@ -225,6 +271,12 @@
             <div class="compose-modes" id="c-modes" role="group" aria-label="mode"></div>
           </div>
         </div>
+        <label class="field" id="c-zone-row" hidden>
+          <span class="field-label">ZONE <span class="field-hint">— PIN THIS DROP ON THE SCHEMATIC</span></span>
+          <select id="c-zone" aria-label="zone">
+            <option value="">— ANYWHERE ON THE MAP —</option>
+          </select>
+        </label>
         <label class="field">
           <span class="field-label">SUBJECT</span>
           <input id="c-title" type="text" autocomplete="off" spellcheck="false"
@@ -316,10 +368,11 @@
     </article>
   </section>
 
-  <script src="js/seed.js?v=7"></script>
-  <script src="js/config.js?v=7"></script>
-  <script src="js/inteldb.js?v=7"></script>
-  <script src="js/fx.js?v=7"></script>
-  <script src="js/app.js?v=7"></script>
+  <script src="js/seed.js?v=8"></script>
+  <script src="js/maps.js?v=8"></script>
+  <script src="js/config.js?v=8"></script>
+  <script src="js/inteldb.js?v=8"></script>
+  <script src="js/fx.js?v=8"></script>
+  <script src="js/app.js?v=8"></script>
 </body>
 </html>
