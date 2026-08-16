@@ -36,11 +36,13 @@ defines:
 
 - `operators`, `sessions`, and an `intel_files` stub — all with **RLS enabled
   and zero policies**, so the Data API cannot read or write them directly.
-- Five `SECURITY DEFINER` RPCs as the only door: `enlist_operator`,
+- `SECURITY DEFINER` RPCs as the only door: `enlist_operator`,
   `authenticate_operator`, `recover_operator`, `get_dossier`,
-  `terminate_session`. Passphrases and extraction ciphers are stored as
-  bcrypt hashes (pgcrypto); sessions are server-issued 48-hex tokens with a
-  30-day expiry. Burning a cipher (recovery) revokes all outstanding sessions.
+  `terminate_session`, plus the intel surface `file_intel`,
+  `get_intel_feed`, `verify_intel`. Passphrases and extraction ciphers are
+  stored as bcrypt hashes (pgcrypto); sessions are server-issued 48-hex
+  tokens with a 30-day expiry. Burning a cipher (recovery) revokes all
+  outstanding sessions.
 
 **Supabase linter note:** the security advisor flags "RLS enabled no policy"
 on the three tables and "anon can execute SECURITY DEFINER" on the five RPCs.
@@ -68,5 +70,25 @@ Everyone starts RESTRICTED; tiers above the operator render as redacted
 teasers — real numbers visible, payload under physical black bars (block
 characters only in the DOM, nothing to reveal). Specialization uses the real
 Delta Force classes (RECON / ENGINEER / ASSAULT / MEDIC), assigned emergently
-from contribution mix — `PENDING` until earned. Verification logic is stubbed;
-the dossier already displays progress toward the next tier.
+from contribution mix — `PENDING` until earned.
+
+## Intel filing & verification (the clearance economy)
+
+The INTEL ARCHIVE view (reachable from the dossier topbar) is where the
+economy runs:
+
+- **Filing.** An operator picks a class, writes a subject + field report, and
+  transmits. Drops are classified at the author's clearance at filing time
+  and immediately count toward specialization.
+- **Feed.** Newest first. Drops above your clearance appear as locked stubs —
+  class, tier, and date only; the title and payload never leave the database
+  (`get_intel_feed` builds redacted rows server-side).
+- **Verification.** Any operator with sufficient clearance can confirm
+  someone else's drop (never their own, once each). At **2 confirmations**
+  the drop flips to VERIFIED, credits the author's verified-file count, and
+  auto-promotes clearance when a tier requirement (3 / 8 / 20 / 50) is met —
+  all inside the `verify_intel` RPC, so the client can't forge progression.
+
+The archive ships with starter drops from the `HANDLER` account (SECRET
+clearance) — two readable at RESTRICTED, one CONFIDENTIAL and one SECRET, so
+new operators see real withheld intel on day one.

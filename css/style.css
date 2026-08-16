@@ -717,10 +717,179 @@ button { font-family: inherit; cursor: pointer; }
 .dossier-foot b { color: var(--accent); }
 .foot-classified { color: var(--danger); }
 
+/* ---------------- intel archive ---------------- */
+
+.btn-accent {
+  border-color: var(--accent-dim);
+  color: var(--accent);
+}
+.btn-accent:hover { border-color: var(--accent); color: var(--accent-bright); }
+
+.archive-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 2fr) 3fr;
+  gap: 14px;
+  align-items: start;
+}
+
+/* composer */
+
+.compose-classes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.class-pick {
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 9px 2px;
+}
+.class-pick:hover { border-color: var(--accent-dim); color: var(--ink); }
+.class-pick.picked {
+  background: var(--accent-faint);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+  text-shadow: 0 0 8px var(--accent-glow);
+}
+
+.compose-panel .field { margin-bottom: 14px; }
+
+.compose-panel textarea {
+  width: 100%;
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 120px;
+}
+.compose-panel textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow), 0 0 12px var(--accent-glow);
+}
+.compose-panel textarea::placeholder { color: var(--ink-faint); }
+
+.compose-note {
+  margin-top: 12px;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+}
+
+/* feed */
+
+.feed { list-style: none; display: grid; }
+
+.feed-empty {
+  padding: 26px 4px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+.drop {
+  padding: 14px 4px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--ink-faint) 55%, transparent);
+}
+.drop:last-child { border-bottom: none; }
+
+.drop-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  margin-bottom: 7px;
+}
+
+.drop-class {
+  font-weight: 700;
+  color: var(--ink);
+  border: 1px solid var(--ink-faint);
+  padding: 1px 7px;
+}
+.drop-tier { color: var(--accent); font-weight: 700; }
+.drop.locked .drop-tier { color: var(--danger); }
+.drop-author { color: var(--ink-faint); }
+.drop-author b { color: var(--ink-dim); }
+.drop-date { margin-left: auto; color: var(--ink-faint); }
+
+.drop-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+
+.drop-body {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.drop.locked .drop-body {
+  color: var(--ink-faint);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.drop-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 9px;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+.drop-verif { color: var(--ink-faint); }
+.drop-verif.confirmed {
+  color: var(--accent);
+  text-shadow: 0 0 8px var(--accent-glow);
+}
+
+.verify-btn {
+  background: none;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 4px 10px;
+}
+.verify-btn:hover {
+  background: var(--accent-faint);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.verify-btn:disabled { opacity: 0.4; cursor: wait; }
+
+.drop-flag { color: var(--ink-faint); }
+
 /* ---------------- responsive ---------------- */
 
 @media (max-width: 760px) {
   .dossier-grid { grid-template-columns: 1fr; }
+  .archive-grid { grid-template-columns: 1fr; }
+  .drop-date { margin-left: 0; }
 
   .id-panel { flex-direction: column; text-align: center; gap: 14px; }
   .id-row { justify-content: center; }

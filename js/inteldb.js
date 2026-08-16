@@ -30,6 +30,10 @@ const intelDB = (() => {
 
   const CLASSES = ['RECON', 'ENGINEER', 'ASSAULT', 'MEDIC'];
 
+  // Confirmations from distinct operators needed to flip a drop to
+  // VERIFIED (and credit its author toward the next clearance tier).
+  const VERIFY_THRESHOLD = 2;
+
   /* ============================================================
      SHARED SHAPING — raw record → what the dossier panel renders.
      Raw shape (both backends): { id, callsign, enlistedAt(ms),
@@ -139,6 +143,29 @@ const intelDB = (() => {
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
         const r = await rpc('get_dossier', { p_token: session.token });
         return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
+      },
+
+      async fileIntel(cls, title, body) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        const r = await rpc('file_intel', {
+          p_token: session.token, p_class: cls, p_title: title, p_body: body,
+        });
+        return r.ok
+          ? { ok: true, dossier: shapeDossier(r.dossier), fileId: r.fileId }
+          : r;
+      },
+
+      async getIntelFeed() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_intel_feed', { p_token: session.token });
+      },
+
+      async verifyIntel(fileId) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('verify_intel', { p_token: session.token, p_file_id: fileId });
       },
 
       setSession(operatorId, callsign) {
@@ -259,6 +286,110 @@ const intelDB = (() => {
           : { ok: false, code: 'SESSION_INVALID' };
       },
 
+      async fileIntel(cls, title, body) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        if (!CLASSES.includes(cls)) return { ok: false, code: 'BAD_CLASS' };
+        if (title.trim().length < 4 || title.trim().length > 80) {
+          return { ok: false, code: 'BAD_TITLE' };
+        }
+        if (body.trim().length < 20 || body.trim().length > 2000) {
+          return { ok: false, code: 'BAD_BODY' };
+        }
+        db.files = db.files || [];
+        const file = {
+          id: globalThis.crypto?.randomUUID
+            ? crypto.randomUUID()
+            : `f-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+          operatorId: me.id,
+          class: cls,
+          clearanceIndex: me.clearanceIndex || 0,
+          title: title.trim(),
+          body: body.trim(),
+          createdAt: Date.now(),
+          verifications: [], // operator ids
+          isVerified: false,
+        };
+        db.files.push(file);
+        me.contributions[cls] = (me.contributions[cls] || 0) + 1;
+        saveDB(db);
+        return { ok: true, dossier: shapeDossier(toRaw(me)), fileId: file.id };
+      },
+
+      async getIntelFeed() {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const myClearance = me.clearanceIndex || 0;
+        const files = (db.files || [])
+          .slice()
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 100)
+          .map((f) => {
+            if (f.clearanceIndex > myClearance) {
+              return {
+                id: f.id, locked: true, class: f.class,
+                clearanceIndex: f.clearanceIndex, createdAt: f.createdAt,
+              };
+            }
+            const author = Object.values(db.operators).find((r) => r.id === f.operatorId);
+            return {
+              id: f.id, locked: false, class: f.class,
+              clearanceIndex: f.clearanceIndex,
+              title: f.title, body: f.body,
+              author: author ? author.callsign : 'UNKNOWN',
+              mine: f.operatorId === me.id,
+              createdAt: f.createdAt,
+              verifications: f.verifications.length,
+              isVerified: f.isVerified,
+              verifiedByMe: f.verifications.includes(me.id),
+            };
+          });
+        return { ok: true, clearanceIndex: myClearance, files };
+      },
+
+      async verifyIntel(fileId) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.clearanceIndex > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        }
+        if (file.operatorId === me.id) return { ok: false, code: 'OWN_FILE' };
+        if (file.verifications.includes(me.id)) {
+          return { ok: false, code: 'ALREADY_VERIFIED' };
+        }
+        file.verifications.push(me.id);
+        if (file.verifications.length >= VERIFY_THRESHOLD && !file.isVerified) {
+          file.isVerified = true;
+          const author = Object.values(db.operators).find((r) => r.id === file.operatorId);
+          if (author) {
+            author.verifiedCount = (author.verifiedCount || 0) + 1;
+            while (
+              (author.clearanceIndex || 0) < TIERS.length - 1 &&
+              author.verifiedCount >= TIER_REQUIREMENTS[(author.clearanceIndex || 0) + 1]
+            ) {
+              author.clearanceIndex = (author.clearanceIndex || 0) + 1;
+            }
+          }
+        }
+        saveDB(db);
+        return {
+          ok: true,
+          verifications: file.verifications.length,
+          isVerified: file.isVerified,
+        };
+      },
+
       setSession(operatorId, callsign) {
         writeSession({ operatorId, callsign });
       },
@@ -280,12 +411,16 @@ const intelDB = (() => {
     TIERS,
     TIER_REQUIREMENTS,
     CLASSES,
+    VERIFY_THRESHOLD,
     live, // true when talking to the real relay
 
     enlistOperator: (cs, pw) => backend.enlistOperator(cs, pw),
     authenticate: (cs, pw) => backend.authenticate(cs, pw),
     recoverWithCipher: (cs, ci, pw) => backend.recoverWithCipher(cs, ci, pw),
     getDossier: (operatorId) => backend.getDossier(operatorId),
+    fileIntel: (cls, title, body) => backend.fileIntel(cls, title, body),
+    getIntelFeed: () => backend.getIntelFeed(),
+    verifyIntel: (fileId) => backend.verifyIntel(fileId),
 
     /**
      * CLEARANCE LADDER — the five tiers plus per-operator teaser
