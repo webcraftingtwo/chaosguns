@@ -103,6 +103,17 @@ economy runs:
   rendered in their own seeded accent and insignia, ranked by standing, with
   specialization, drop/verified/note counts, and a last-contact pulse
   (`ACTIVE NOW` → `DARK — 30+ DAYS SILENT`).
+- **Operator files.** Tap a roster row or an author name in the feed to open
+  that operator's personnel file — identity in their seeded colors, standing,
+  stats (burn notices included), and their field record gated at *your*
+  clearance. Confirm, burn, and annex work straight from the profile.
+- **Burn notices.** The inverse of verification: two burns from cleared
+  operators strike a drop (struck title, red stamp, no further confirmation).
+  If it was verified, verification is revoked and the author loses that
+  credit — clearance already granted is not clawed back. You can't burn your
+  own drop, can't burn twice, and can't both confirm and burn the same drop.
+  Burning is a two-tap action, the author gets a `BURN_NOTICE` dispatch, and
+  annexes stay open so the burn can be explained.
 - **Verification.** Any operator with sufficient clearance can confirm
   someone else's drop (never their own, once each). At **2 confirmations**
   the drop flips to VERIFIED, credits the author's verified-file count, and

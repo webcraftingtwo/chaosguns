@@ -1016,6 +1016,48 @@ select:focus {
 }
 .annex-compose input::placeholder { color: var(--ink-faint); }
 
+/* burn notices */
+
+.burn-btn {
+  background: none;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  color: color-mix(in srgb, var(--danger) 80%, var(--ink));
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 4px 10px;
+}
+.burn-btn:hover { border-color: var(--danger); color: var(--danger); }
+.burn-btn:disabled { opacity: 0.4; cursor: wait; }
+
+.drop.burned .drop-title { text-decoration: line-through; color: var(--ink-faint); }
+.drop.burned .drop-body { color: var(--ink-faint); }
+
+.burn-stamp {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  padding: 1px 7px;
+  transform: rotate(-1deg);
+}
+
+.drop-verif.struck { color: var(--danger); }
+.drop-burns { color: var(--ink-faint); font-size: 9px; letter-spacing: 0.12em; }
+
+/* operator file (profile) */
+
+.drop-author b.link,
+.roster-row.link { cursor: pointer; }
+.drop-author b.link:hover { text-decoration: underline; color: var(--accent); }
+.roster-row.link:hover { background: color-mix(in srgb, var(--accent-faint) 60%, transparent); }
+
+.p-tier { font-weight: 700; letter-spacing: 0.14em; }
+.p-statline { font-size: 10px; color: var(--ink-dim); letter-spacing: 0.1em; }
+.p-statline .p-burns { color: var(--danger); }
+
 /* roster */
 .roster-panel { min-height: 200px; }
 .roster-list { list-style: none; }
