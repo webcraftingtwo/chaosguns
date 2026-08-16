@@ -90,6 +90,19 @@ economy runs:
 - **The Compartment.** A second channel tab in the archive. COMPARTMENTED
   operators see and file eyes-only tier-4 drops there; everyone else gets an
   ACCESS DENIED panel showing only the real count of files inside.
+- **Annexes.** Field notes appended under a drop — corroborations,
+  corrections, updates — by any operator cleared to read it (2–500 chars).
+  Annexing someone's drop queues them an `ANNEX_ADDED` dispatch. Locked
+  drops report how many notes are *sealed* with them, never their content.
+- **Theater / mode tags.** Optional map (Zero Dam, Layali Grove, Space City,
+  Brakkesh, Tide Prison, Ascension, Threshold, Shafted, Cracked) and mode
+  (Operations / Warfare) tags on drops, with a theater filter in the feed.
+  Tags survive redaction: you can know *where* withheld intel applies, never
+  *what* it says.
+- **Roster.** The operator directory (dossier topbar): every operator
+  rendered in their own seeded accent and insignia, ranked by standing, with
+  specialization, drop/verified/note counts, and a last-contact pulse
+  (`ACTIVE NOW` → `DARK — 30+ DAYS SILENT`).
 - **Verification.** Any operator with sufficient clearance can confirm
   someone else's drop (never their own, once each). At **2 confirmations**
   the drop flips to VERIFIED, credits the author's verified-file count, and

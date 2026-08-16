@@ -906,8 +906,166 @@ button { font-family: inherit; cursor: pointer; }
 }
 .tier-pick:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* composer theater/mode tags */
+
+.compose-tags {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+select {
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 8px 10px;
+  width: 100%;
+}
+select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.compose-modes { display: flex; gap: 6px; margin-top: 6px; }
+.mode-pick {
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 8px 10px;
+}
+.mode-pick:hover { border-color: var(--accent-dim); color: var(--ink); }
+.mode-pick.picked {
+  background: var(--accent-faint);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+/* drop tags in the feed */
+.drop-tag {
+  color: var(--ink);
+  border: 1px dashed var(--ink-faint);
+  padding: 1px 7px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+/* annex threads */
+.annex-btn {
+  background: none;
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 4px 10px;
+}
+.annex-btn:hover { border-color: var(--accent-dim); color: var(--accent); }
+.annex-btn.open { border-color: var(--accent); color: var(--accent); }
+
+.annex-thread {
+  margin-top: 10px;
+  border-left: 2px solid var(--accent-line);
+  padding-left: 12px;
+}
+.annex {
+  padding: 7px 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink-faint) 45%, transparent);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+.annex:last-of-type { border-bottom: none; }
+.annex-author {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  margin-right: 8px;
+}
+.annex-author.mine { color: var(--ink); }
+.annex-date { color: var(--ink-faint); font-size: 9px; margin-left: 8px; }
+.annex-empty { padding: 8px 0; font-size: 10px; color: var(--ink-faint); letter-spacing: 0.1em; }
+
+.annex-compose { display: flex; gap: 8px; margin-top: 8px; }
+.annex-compose input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 7px 10px;
+}
+.annex-compose input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+.annex-compose input::placeholder { color: var(--ink-faint); }
+
+/* roster */
+.roster-panel { min-height: 200px; }
+.roster-list { list-style: none; }
+
+.roster-row {
+  display: grid;
+  grid-template-columns: 44px minmax(120px, 1.4fr) 130px 1.6fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 13px 4px;
+  border-bottom: 1px dashed color-mix(in srgb, var(--ink-faint) 55%, transparent);
+}
+.roster-row:last-child { border-bottom: none; }
+.roster-row.me { background: var(--accent-faint); }
+
+.roster-insignia { width: 38px; height: 38px; }
+.roster-insignia svg { width: 100%; height: 100%; }
+
+.roster-callsign {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  overflow-wrap: anywhere;
+}
+.roster-callsign .you-mark { color: var(--ink); font-size: 9px; letter-spacing: 0.1em; }
+.roster-opid { display: block; font-size: 9px; letter-spacing: 0.1em; color: var(--ink-faint); font-weight: 400; }
+
+.roster-tier {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+.roster-spec { display: block; font-size: 9px; color: var(--ink-faint); letter-spacing: 0.08em; font-weight: 400; margin-top: 2px; }
+
+.roster-stats { font-size: 10px; letter-spacing: 0.1em; color: var(--ink-dim); }
+.roster-contact { font-size: 9px; letter-spacing: 0.12em; color: var(--ink-faint); text-align: right; }
+.roster-contact.live { color: var(--accent); }
+
 /* feed search + chips */
 .feed-filters { margin-bottom: 12px; }
+
+.filter-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.filter-row #f-search { margin-bottom: 0; }
+#f-map { width: auto; font-size: 10px; }
 
 #f-search {
   width: 100%;
@@ -1127,4 +1285,13 @@ button { font-family: inherit; cursor: pointer; }
   .spec-class { grid-template-columns: 74px 1fr auto; }
   .panel { padding: 16px; }
   .panel-title-aside { display: none; }
+
+  .compose-tags { grid-template-columns: 1fr; }
+  .filter-row { grid-template-columns: 1fr; }
+  .roster-row {
+    grid-template-columns: 38px 1fr auto;
+    grid-template-rows: auto auto;
+  }
+  .roster-stats { grid-column: 2; }
+  .roster-contact { grid-column: 3; text-align: right; }
 }

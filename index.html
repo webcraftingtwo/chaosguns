@@ -7,7 +7,7 @@
   <title>DEAD DROP // ACCESS TERMINAL</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
   <!-- ?v= is bumped on every deploy so phones never mix new HTML with stale cached scripts -->
-  <link rel="stylesheet" href="css/style.css?v=5">
+  <link rel="stylesheet" href="css/style.css?v=6">
 </head>
 <body>
 
@@ -119,6 +119,7 @@
       <div class="topbar-right">
         <span class="topbar-file" id="d-fileno">FILE ██-███</span>
         <button id="btn-archive" class="btn-ghost btn-small btn-accent" type="button">INTEL ARCHIVE</button>
+        <button id="btn-roster" class="btn-ghost btn-small btn-accent" type="button">ROSTER</button>
         <button id="btn-logout" class="btn-ghost btn-small" type="button">TERMINATE SESSION</button>
       </div>
     </header>
@@ -212,6 +213,18 @@
           <span class="field-label">CLASSIFY AT</span>
           <div class="compose-tiers" id="c-tiers" role="group" aria-label="classification tier"></div>
         </div>
+        <div class="compose-tags">
+          <label class="field compose-theater">
+            <span class="field-label">THEATER</span>
+            <select id="c-map" aria-label="theater">
+              <option value="">— UNSPECIFIED —</option>
+            </select>
+          </label>
+          <div class="compose-mode">
+            <span class="field-label">MODE</span>
+            <div class="compose-modes" id="c-modes" role="group" aria-label="mode"></div>
+          </div>
+        </div>
         <label class="field">
           <span class="field-label">SUBJECT</span>
           <input id="c-title" type="text" autocomplete="off" spellcheck="false"
@@ -234,8 +247,13 @@
       <article class="panel feed-panel decrypt" id="feed-panel">
         <h2 class="panel-title" id="feed-title">NETWORK DROPS <span class="panel-title-aside" id="feed-count"></span></h2>
         <div class="feed-filters" id="feed-filters">
-          <input id="f-search" type="search" autocomplete="off" spellcheck="false"
-                 placeholder="SEARCH THE ARCHIVE — SUBJECT, REPORT, OPERATOR" aria-label="search the archive">
+          <div class="filter-row">
+            <input id="f-search" type="search" autocomplete="off" spellcheck="false"
+                   placeholder="SEARCH THE ARCHIVE — SUBJECT, REPORT, OPERATOR" aria-label="search the archive">
+            <select id="f-map" aria-label="theater filter">
+              <option value="">ALL THEATERS</option>
+            </select>
+          </div>
           <div class="feed-chips" id="f-chips" role="group" aria-label="feed filter"></div>
         </div>
         <ul class="feed" id="feed"></ul>
@@ -244,10 +262,28 @@
     </div>
   </section>
 
-  <script src="js/seed.js?v=5"></script>
-  <script src="js/config.js?v=5"></script>
-  <script src="js/inteldb.js?v=5"></script>
-  <script src="js/fx.js?v=5"></script>
-  <script src="js/app.js?v=5"></script>
+  <!-- ============ OPERATOR ROSTER ============ -->
+  <section id="roster" class="dossier hidden">
+    <header class="dossier-topbar decrypt">
+      <div class="topbar-left">
+        <span class="topbar-sig">DEAD DROP</span>
+        <span class="topbar-path">// OPERATOR ROSTER</span>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-file" id="r-count">— OPERATORS ON THE NETWORK</span>
+        <button id="btn-roster-back" class="btn-ghost btn-small btn-accent" type="button">RETURN TO DOSSIER</button>
+      </div>
+    </header>
+    <article class="panel roster-panel decrypt">
+      <h2 class="panel-title">ACTIVE OPERATORS <span class="panel-title-aside">RANKED BY STANDING // EVERY MARK IS SEEDED, NO TWO ALIKE</span></h2>
+      <ul class="roster-list" id="roster-list"></ul>
+    </article>
+  </section>
+
+  <script src="js/seed.js?v=6"></script>
+  <script src="js/config.js?v=6"></script>
+  <script src="js/inteldb.js?v=6"></script>
+  <script src="js/fx.js?v=6"></script>
+  <script src="js/app.js?v=6"></script>
 </body>
 </html>

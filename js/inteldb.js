@@ -34,6 +34,11 @@ const intelDB = (() => {
   // VERIFIED (and credit its author toward the next clearance tier).
   const VERIFY_THRESHOLD = 2;
 
+  // Theater + mode tags (must mirror the CHECK constraints in Postgres).
+  const MAPS = ['ZERO DAM', 'LAYALI GROVE', 'SPACE CITY', 'BRAKKESH', 'TIDE PRISON',
+                'ASCENSION', 'THRESHOLD', 'SHAFTED', 'CRACKED'];
+  const MODES = ['OPERATIONS', 'WARFARE'];
+
   /* ============================================================
      SHARED SHAPING — raw record → what the dossier panel renders.
      Raw shape (both backends): { id, callsign, enlistedAt(ms),
@@ -145,16 +150,34 @@ const intelDB = (() => {
         return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
       },
 
-      async fileIntel(cls, title, body, clearance = null) {
+      async fileIntel(cls, title, body, clearance = null, map = null, mode = null) {
         const session = getSession();
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
         const r = await rpc('file_intel', {
           p_token: session.token, p_class: cls, p_title: title, p_body: body,
-          p_clearance: clearance,
+          p_clearance: clearance, p_map: map, p_mode: mode,
         });
         return r.ok
           ? { ok: true, dossier: shapeDossier(r.dossier), fileId: r.fileId }
           : r;
+      },
+
+      async annexIntel(fileId, body) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('annex_intel', { p_token: session.token, p_file_id: fileId, p_body: body });
+      },
+
+      async getAnnexes(fileId) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_annexes', { p_token: session.token, p_file_id: fileId });
+      },
+
+      async getRoster() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_roster', { p_token: session.token });
       },
 
       async getIntelFeed() {
@@ -309,7 +332,7 @@ const intelDB = (() => {
           : { ok: false, code: 'SESSION_INVALID' };
       },
 
-      async fileIntel(cls, title, body, clearance = null) {
+      async fileIntel(cls, title, body, clearance = null, map = null, mode = null) {
         const db = loadDB();
         const me = Object.values(db.operators).find(
           (r) => r.id === getSession()?.operatorId
@@ -322,6 +345,8 @@ const intelDB = (() => {
         if (body.trim().length < 20 || body.trim().length > 2000) {
           return { ok: false, code: 'BAD_BODY' };
         }
+        if (map !== null && !MAPS.includes(map)) return { ok: false, code: 'BAD_TAG' };
+        if (mode !== null && !MODES.includes(mode)) return { ok: false, code: 'BAD_TAG' };
         const tier = clearance ?? (me.clearanceIndex || 0);
         if (tier < 0 || tier > (me.clearanceIndex || 0)) {
           return { ok: false, code: 'BAD_CLEARANCE' };
@@ -336,6 +361,8 @@ const intelDB = (() => {
           clearanceIndex: tier,
           title: title.trim(),
           body: body.trim(),
+          map,
+          mode,
           createdAt: Date.now(),
           verifications: [], // operator ids
           isVerified: false,
@@ -358,10 +385,12 @@ const intelDB = (() => {
           .sort((a, b) => b.createdAt - a.createdAt)
           .slice(0, 100)
           .map((f) => {
+            const annexes = (db.annexes || []).filter((a) => a.fileId === f.id).length;
             if (f.clearanceIndex > myClearance) {
               return {
                 id: f.id, locked: true, class: f.class,
                 clearanceIndex: f.clearanceIndex, createdAt: f.createdAt,
+                map: f.map || null, mode: f.mode || null, annexes,
               };
             }
             const author = Object.values(db.operators).find((r) => r.id === f.operatorId);
@@ -375,6 +404,7 @@ const intelDB = (() => {
               verifications: f.verifications.length,
               isVerified: f.isVerified,
               verifiedByMe: f.verifications.includes(me.id),
+              map: f.map || null, mode: f.mode || null, annexes,
             };
           });
         return { ok: true, clearanceIndex: myClearance, files };
@@ -428,6 +458,92 @@ const intelDB = (() => {
           verifications: file.verifications.length,
           isVerified: file.isVerified,
         };
+      },
+
+      async annexIntel(fileId, body) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.clearanceIndex > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        }
+        const text = body.trim();
+        if (text.length < 2 || text.length > 500) return { ok: false, code: 'BAD_ANNEX' };
+        db.annexes = db.annexes || [];
+        const annex = {
+          id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          fileId, operatorId: me.id, body: text, createdAt: Date.now(),
+        };
+        db.annexes.push(annex);
+        if (file.operatorId !== me.id) {
+          db.dispatches = db.dispatches || [];
+          db.dispatches.push({
+            operatorId: file.operatorId, kind: 'ANNEX_ADDED',
+            payload: { title: file.title, author: me.callsign },
+            createdAt: Date.now(), seen: false,
+          });
+        }
+        saveDB(db);
+        return {
+          ok: true,
+          annex: { author: me.callsign, body: text, mine: true, createdAt: annex.createdAt },
+          count: db.annexes.filter((a) => a.fileId === fileId).length,
+        };
+      },
+
+      async getAnnexes(fileId) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.clearanceIndex > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        }
+        return {
+          ok: true,
+          annexes: (db.annexes || [])
+            .filter((a) => a.fileId === fileId)
+            .sort((a, b) => a.createdAt - b.createdAt)
+            .map((a) => {
+              const author = Object.values(db.operators).find((r) => r.id === a.operatorId);
+              return {
+                author: author ? author.callsign : 'UNKNOWN',
+                body: a.body, mine: a.operatorId === me.id, createdAt: a.createdAt,
+              };
+            }),
+        };
+      },
+
+      async getRoster() {
+        const db = loadDB();
+        const meId = getSession()?.operatorId;
+        if (!meId) return { ok: false, code: 'SESSION_INVALID' };
+        const roster = Object.values(db.operators)
+          .map((o) => ({
+            callsign: o.callsign,
+            clearanceIndex: o.clearanceIndex || 0,
+            verifiedCount: o.verifiedCount || 0,
+            contributions: o.contributions || {},
+            enlistedAt: o.enlistedAt,
+            drops: (db.files || []).filter((f) => f.operatorId === o.id).length,
+            annexes: (db.annexes || []).filter((a) => a.operatorId === o.id).length,
+            lastContact: o.enlistedAt, // mock has no session history
+            me: o.id === meId,
+          }))
+          .sort((a, b) =>
+            b.clearanceIndex - a.clearanceIndex ||
+            b.verifiedCount - a.verifiedCount ||
+            a.enlistedAt - b.enlistedAt
+          )
+          .slice(0, 100);
+        return { ok: true, roster };
       },
 
       async getDispatches() {
@@ -509,15 +625,21 @@ const intelDB = (() => {
     TIER_REQUIREMENTS,
     CLASSES,
     VERIFY_THRESHOLD,
+    MAPS,
+    MODES,
     live, // true when talking to the real relay
 
     enlistOperator: (cs, pw) => backend.enlistOperator(cs, pw),
     authenticate: (cs, pw) => backend.authenticate(cs, pw),
     recoverWithCipher: (cs, ci, pw) => backend.recoverWithCipher(cs, ci, pw),
     getDossier: (operatorId) => backend.getDossier(operatorId),
-    fileIntel: (cls, title, body, clearance) => backend.fileIntel(cls, title, body, clearance),
+    fileIntel: (cls, title, body, clearance, map, mode) =>
+      backend.fileIntel(cls, title, body, clearance, map, mode),
     getIntelFeed: () => backend.getIntelFeed(),
     verifyIntel: (fileId) => backend.verifyIntel(fileId),
+    annexIntel: (fileId, body) => backend.annexIntel(fileId, body),
+    getAnnexes: (fileId) => backend.getAnnexes(fileId),
+    getRoster: () => backend.getRoster(),
     getDispatches: () => backend.getDispatches(),
     issueCompartmentKey: () => backend.issueCompartmentKey(),
     redeemCompartmentKey: (code) => backend.redeemCompartmentKey(code),

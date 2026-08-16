@@ -64,6 +64,8 @@
     BAD_BODY: 'REPORT MUST BE 20–2000 CHARACTERS',
     OWN_FILE: 'YOU CANNOT CONFIRM YOUR OWN DROP',
     ALREADY_VERIFIED: 'ALREADY CONFIRMED BY YOU',
+    BAD_ANNEX: 'FIELD NOTES RUN 2–500 CHARACTERS',
+    BAD_TAG: 'UNRECOGNIZED THEATER OR MODE TAG',
     INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
     NOT_ON_FILE: 'FILE NOT ON RECORD',
     KEY_REJECTED: 'KEY REJECTED — INVALID OR ALREADY BURNED',
@@ -258,6 +260,9 @@
     }
     if (d.kind === 'CLEARANCE_GRANTED') {
       return `▮ CLEARANCE REVIEW PASSED — ${intelDB.TIERS[d.payload.clearanceIndex]} GRANTED`;
+    }
+    if (d.kind === 'ANNEX_ADDED') {
+      return `▮ FIELD NOTE APPENDED — ${d.payload.author} ANNEXED "${d.payload.title}"`;
     }
     return '▮ DISPATCH RECEIVED';
   }
@@ -536,6 +541,7 @@
     buildClassPicker();
     buildTierPicker();
     buildFilterChips();
+    buildTagControls();
 
     const blocks = archiveEl.querySelectorAll('.decrypt');
     blocks.forEach((b) => b.classList.remove('decrypted'));
@@ -638,7 +644,10 @@
     btn.disabled = true;
     composeMsg('… TRANSMITTING TO RELAY', true);
     try {
-      const res = await intelDB.fileIntel(pickedClass, title, body, tier);
+      const res = await intelDB.fileIntel(
+        pickedClass, title, body, tier,
+        $('#c-map').value || null, pickedMode
+      );
       if (!res.ok) return composeMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
       currentDossier = res.dossier;
       $('#c-title').value = '';
@@ -652,6 +661,46 @@
       await refreshFeed();
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  /* ---- theater + mode tag controls ---- */
+
+  let pickedMode = null;
+
+  function buildTagControls() {
+    const mapSel = $('#c-map');
+    if (mapSel.options.length === 1) {
+      for (const m of intelDB.MAPS) {
+        const o = document.createElement('option');
+        o.value = m;
+        o.textContent = m;
+        mapSel.appendChild(o);
+      }
+    }
+    const modeWrap = $('#c-modes');
+    modeWrap.innerHTML = '';
+    for (const m of intelDB.MODES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'mode-pick' + (pickedMode === m ? ' picked' : '');
+      b.textContent = m;
+      b.addEventListener('click', () => {
+        pickedMode = pickedMode === m ? null : m; // tap again to clear
+        modeWrap.querySelectorAll('.mode-pick').forEach((n) =>
+          n.classList.toggle('picked', n.textContent === pickedMode)
+        );
+      });
+      modeWrap.appendChild(b);
+    }
+    const filterSel = $('#f-map');
+    if (filterSel.options.length === 1) {
+      for (const m of intelDB.MAPS) {
+        const o = document.createElement('option');
+        o.value = m;
+        o.textContent = m;
+        filterSel.appendChild(o);
+      }
     }
   }
 
@@ -726,6 +775,10 @@
     else if (filterChip === 'WITHHELD') files = files.filter((f) => f.locked);
     else if (filterChip !== 'ALL') files = files.filter((f) => f.class === filterChip);
 
+    /* theater filter — locked rows keep their tags, so they filter too */
+    const mapF = $('#f-map').value;
+    if (mapF) files = files.filter((f) => f.map === mapF);
+
     /* text search — locked rows carry no text, so a query excludes them */
     const q = $('#f-search').value.trim().toLowerCase();
     if (q) {
@@ -780,6 +833,8 @@
       span('drop-class', f.class),
       span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
     );
+    if (f.map) head.append(span('drop-tag', f.map));
+    if (f.mode) head.append(span('drop-tag', f.mode));
     const author = span('drop-author', '');
     author.append('BY ');
     const b = document.createElement('b');
@@ -827,8 +882,89 @@
       foot.appendChild(btn);
     }
 
-    li.append(head, title, body, foot);
+    /* annex thread toggle */
+    const annexBtn = document.createElement('button');
+    annexBtn.type = 'button';
+    annexBtn.className = 'annex-btn';
+    annexBtn.textContent = `ANNEX (${f.annexes ?? 0})`;
+    foot.appendChild(annexBtn);
+
+    const thread = document.createElement('div');
+    thread.className = 'annex-thread';
+    thread.hidden = true;
+
+    annexBtn.addEventListener('click', async () => {
+      thread.hidden = !thread.hidden;
+      annexBtn.classList.toggle('open', !thread.hidden);
+      if (!thread.hidden && !thread.dataset.loaded) {
+        await loadAnnexThread(f, thread, annexBtn);
+      }
+    });
+
+    li.append(head, title, body, foot, thread);
     return li;
+  }
+
+  /* ---- annex threads: field notes under a drop ---- */
+
+  function annexEntry(a) {
+    const div = document.createElement('div');
+    div.className = 'annex';
+    const who = span('annex-author' + (a.mine ? ' mine' : ''), a.mine ? 'YOU' : a.author.toUpperCase());
+    div.append(who, document.createTextNode(a.body));
+    div.append(span('annex-date', fmtDropDate(a.createdAt)));
+    return div;
+  }
+
+  async function loadAnnexThread(f, thread, annexBtn) {
+    thread.dataset.loaded = '1';
+    thread.innerHTML = '';
+    const res = await intelDB.getAnnexes(f.id);
+    if (!res.ok) {
+      thread.appendChild(span('annex-empty', MESSAGES[res.code] || 'ANNEX RETRIEVAL FAILED'));
+      return;
+    }
+
+    const list = document.createElement('div');
+    if (res.annexes.length === 0) {
+      list.appendChild(span('annex-empty', 'NO FIELD NOTES ON THIS DROP. CORROBORATE, CORRECT, OR UPDATE IT.'));
+    } else {
+      for (const a of res.annexes) list.appendChild(annexEntry(a));
+    }
+    thread.appendChild(list);
+
+    const compose = document.createElement('div');
+    compose.className = 'annex-compose';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.maxLength = 500;
+    input.placeholder = 'APPEND FIELD NOTE — CORROBORATE OR CORRECT';
+    input.setAttribute('aria-label', 'append field note');
+    const send = document.createElement('button');
+    send.type = 'button';
+    send.className = 'ck-btn';
+    send.textContent = 'APPEND';
+    const submit = async () => {
+      const text = input.value.trim();
+      if (text.length < 2) return;
+      send.disabled = true;
+      const r = await intelDB.annexIntel(f.id, text);
+      send.disabled = false;
+      if (!r.ok) {
+        input.value = '';
+        input.placeholder = MESSAGES[r.code] || 'RELAY ERROR — TRY AGAIN';
+        return;
+      }
+      const empty = list.querySelector('.annex-empty');
+      if (empty) empty.remove();
+      list.appendChild(annexEntry(r.annex));
+      annexBtn.textContent = `ANNEX (${r.count})`;
+      input.value = '';
+    };
+    send.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    compose.append(input, send);
+    thread.appendChild(compose);
   }
 
   function lockedDropRow(f) {
@@ -840,6 +976,11 @@
     head.append(
       span('drop-class', f.class),
       span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
+    );
+    // tags survive redaction: you may know WHERE, never WHAT
+    if (f.map) head.append(span('drop-tag', f.map));
+    if (f.mode) head.append(span('drop-tag', f.mode));
+    head.append(
       span('drop-author', 'AUTHOR WITHHELD'),
       span('drop-date', fmtDropDate(f.createdAt)),
     );
@@ -855,7 +996,8 @@
     const body = document.createElement('div');
     body.className = 'drop-body';
     body.textContent =
-      `PAYLOAD WITHHELD — ${intelDB.TIERS[f.clearanceIndex]} CLEARANCE REQUIRED.`;
+      `PAYLOAD WITHHELD — ${intelDB.TIERS[f.clearanceIndex]} CLEARANCE REQUIRED.` +
+      (f.annexes > 0 ? ` ${f.annexes} FIELD NOTE${f.annexes === 1 ? '' : 'S'} SEALED WITH IT.` : '');
 
     li.append(head, title, body);
     return li;
@@ -866,6 +1008,98 @@
     s.className = cls;
     s.textContent = text;
     return s;
+  }
+
+  /* ============================================================
+     OPERATOR ROSTER
+     ============================================================ */
+
+  const rosterEl = $('#roster');
+
+  function fmtLastContact(ms) {
+    const diff = Date.now() - ms;
+    const min = Math.floor(diff / 60000);
+    if (min < 5) return { text: 'ACTIVE NOW', live: true };
+    if (min < 60) return { text: `LAST CONTACT ${min}M AGO`, live: false };
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return { text: `LAST CONTACT ${hrs}H AGO`, live: false };
+    const days = Math.floor(hrs / 24);
+    if (days <= 30) return { text: `LAST CONTACT ${days}D AGO`, live: false };
+    return { text: 'DARK — 30+ DAYS SILENT', live: false };
+  }
+
+  function rosterSpec(contributions) {
+    const total = intelDB.CLASSES.reduce((s, c) => s + (contributions[c] || 0), 0);
+    if (total === 0) return 'SPECIALIZATION PENDING';
+    const ranked = [...intelDB.CLASSES].sort(
+      (a, b) => (contributions[b] || 0) - (contributions[a] || 0)
+    );
+    return `${ranked[0]} // ${ranked[1]}`;
+  }
+
+  async function openRoster() {
+    el.dossier.classList.add('hidden');
+    rosterEl.classList.remove('hidden');
+    window.scrollTo(0, 0);
+
+    const blocks = rosterEl.querySelectorAll('.decrypt');
+    blocks.forEach((b) => b.classList.remove('decrypted'));
+    FX.staggerIn(blocks, 110);
+
+    const listEl = $('#roster-list');
+    listEl.innerHTML = '';
+    const res = await intelDB.getRoster();
+    if (!res.ok) {
+      listEl.appendChild(span('feed-empty', MESSAGES[res.code] || 'ROSTER UNAVAILABLE'));
+      return;
+    }
+
+    $('#r-count').textContent = `${res.roster.length} OPERATOR${res.roster.length === 1 ? '' : 'S'} ON THE NETWORK`;
+
+    // every row rendered in that operator's own seeded identity
+    const seeds = await Promise.all(res.roster.map((o) => deriveSeed(o.callsign)));
+
+    res.roster.forEach((op, i) => {
+      const seed = seeds[i];
+      const li = document.createElement('li');
+      li.className = 'roster-row' + (op.me ? ' me' : '');
+      const hue = `hsl(${seed.hue} 72% 60%)`;
+
+      const insignia = document.createElement('span');
+      insignia.className = 'roster-insignia';
+      insignia.style.color = hue;
+      insignia.innerHTML = seed.insignia.svg; // trusted: our own SVG set
+
+      const name = document.createElement('span');
+      name.className = 'roster-callsign';
+      name.style.color = hue;
+      name.textContent = op.callsign;
+      if (op.me) {
+        name.append(' ');
+        name.appendChild(span('you-mark', '◂ YOU'));
+      }
+      name.appendChild(span('roster-opid', `${seed.operatorId} // MARK: ${seed.insignia.name}`));
+
+      const tier = document.createElement('span');
+      tier.className = 'roster-tier';
+      tier.style.color = hue;
+      tier.textContent = intelDB.TIERS[op.clearanceIndex];
+      tier.appendChild(span('roster-spec', rosterSpec(op.contributions)));
+
+      const stats = span('roster-stats',
+        `${op.drops} DROP${op.drops === 1 ? '' : 'S'} // ${op.verifiedCount} VERIFIED // ${op.annexes} NOTE${op.annexes === 1 ? '' : 'S'}`);
+
+      const contact = fmtLastContact(op.lastContact);
+      const contactEl = span('roster-contact' + (contact.live ? ' live' : ''), contact.text);
+
+      li.append(insignia, name, tier, stats, contactEl);
+      listEl.appendChild(li);
+    });
+  }
+
+  function closeRoster() {
+    rosterEl.classList.add('hidden');
+    el.dossier.classList.remove('hidden');
   }
 
   /* ============================================================
@@ -880,6 +1114,7 @@
     document.documentElement.style.removeProperty('--accent-h');
     el.dossier.classList.add('hidden');
     archiveEl.classList.add('hidden');
+    rosterEl.classList.add('hidden');
     el.gate.classList.remove('hidden');
     el.inPass.value = '';
     el.inConfirm.value = '';
@@ -906,6 +1141,9 @@
   $('#ch-network').addEventListener('click', () => { setChannel('network'); buildTierPicker(); renderFeed(); });
   $('#ch-compartment').addEventListener('click', () => { setChannel('compartment'); buildTierPicker(); renderFeed(); });
   $('#f-search').addEventListener('input', renderFeed);
+  $('#f-map').addEventListener('change', renderFeed);
+  $('#btn-roster').addEventListener('click', openRoster);
+  $('#btn-roster-back').addEventListener('click', closeRoster);
 
   // ENTER anywhere in the gate submits (no <form>, no page reload).
   [el.inCallsign, el.inPass, el.inConfirm, el.inCipher].forEach((input) =>
