@@ -21,6 +21,7 @@ is unavailable outside a secure context.)
 
 | File | Role |
 | --- | --- |
+| `js/maps.js` | Theater schematics for the map interface — original stylised diagrams drawn for this terminal (not game art). Zone names/geometry live here, not in the database, so renaming a zone or adding a theater needs no migration. |
 | `js/seed.js` | Pure functions. SHA-256 of the lowercased callsign → accent hue, operator ID (`OP-XXXX-NN`), insignia, and stable teaser numbers. Same callsign → identical dossier, nothing stored. |
 | `js/config.js` | Relay coordinates: Supabase project URL + publishable key (safe to ship — it only opens the RPC surface). Blank them to run fully offline on the mock. |
 | `js/inteldb.js` | **The data layer.** All persistence behind async `intelDB` methods (`enlistOperator`, `authenticate`, `recoverWithCipher`, `getDossier`, `getClearanceLadder`, session). One facade, two backends: live Supabase RPC when `config.js` has coordinates, localStorage mock otherwise. The UI never touches storage or the network directly and cannot tell the backends apart. |
@@ -107,6 +108,12 @@ economy runs:
   that operator's personnel file — identity in their seeded colors, standing,
   stats (burn notices included), and their field record gated at *your*
   clearance. Confirm, burn, and annex work straight from the profile.
+- **Theater map.** A third archive channel: a clickable tactical schematic of
+  the theater (Zero Dam drawn; others show as "no schematic on file"). Zones
+  report how many files sit in them and how many are withheld; clicking one
+  pulls its intel. Drops tagged with a theater can be pinned to a zone from
+  the composer. Withheld files still show their zone — the map tells you
+  where the secrets are, never what they say.
 - **Burn notices.** The inverse of verification: two burns from cleared
   operators strike a drop (struck title, red stamp, no further confirmation).
   If it was verified, verification is revoked and the author loses that

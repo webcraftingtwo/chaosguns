@@ -150,12 +150,12 @@ const intelDB = (() => {
         return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
       },
 
-      async fileIntel(cls, title, body, clearance = null, map = null, mode = null) {
+      async fileIntel(cls, title, body, clearance = null, map = null, mode = null, zone = null) {
         const session = getSession();
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
         const r = await rpc('file_intel', {
           p_token: session.token, p_class: cls, p_title: title, p_body: body,
-          p_clearance: clearance, p_map: map, p_mode: mode,
+          p_clearance: clearance, p_map: map, p_mode: mode, p_zone: zone,
         });
         return r.ok
           ? { ok: true, dossier: shapeDossier(r.dossier), fileId: r.fileId }
@@ -295,7 +295,7 @@ const intelDB = (() => {
         return {
           id: f.id, locked: true, class: f.class,
           clearanceIndex: f.clearanceIndex, createdAt: f.createdAt,
-          map: f.map || null, mode: f.mode || null, annexes,
+          map: f.map || null, mode: f.mode || null, zone: f.zone || null, annexes,
         };
       }
       const author = Object.values(db.operators).find((r) => r.id === f.operatorId);
@@ -310,7 +310,7 @@ const intelDB = (() => {
         verifications: f.verifications.length,
         isVerified: f.isVerified,
         verifiedByMe: f.verifications.includes(viewer.id),
-        map: f.map || null, mode: f.mode || null, annexes,
+        map: f.map || null, mode: f.mode || null, zone: f.zone || null, annexes,
         isBurned: f.isBurned || false,
         burns: burnerIds.length,
         burnedByMe: burnerIds.includes(viewer.id),
@@ -373,7 +373,7 @@ const intelDB = (() => {
           : { ok: false, code: 'SESSION_INVALID' };
       },
 
-      async fileIntel(cls, title, body, clearance = null, map = null, mode = null) {
+      async fileIntel(cls, title, body, clearance = null, map = null, mode = null, zone = null) {
         const db = loadDB();
         const me = Object.values(db.operators).find(
           (r) => r.id === getSession()?.operatorId
@@ -404,6 +404,7 @@ const intelDB = (() => {
           body: body.trim(),
           map,
           mode,
+          zone: map ? (zone || null) : null,
           createdAt: Date.now(),
           verifications: [], // operator ids
           isVerified: false,
@@ -723,8 +724,8 @@ const intelDB = (() => {
     authenticate: (cs, pw) => backend.authenticate(cs, pw),
     recoverWithCipher: (cs, ci, pw) => backend.recoverWithCipher(cs, ci, pw),
     getDossier: (operatorId) => backend.getDossier(operatorId),
-    fileIntel: (cls, title, body, clearance, map, mode) =>
-      backend.fileIntel(cls, title, body, clearance, map, mode),
+    fileIntel: (cls, title, body, clearance, map, mode, zone) =>
+      backend.fileIntel(cls, title, body, clearance, map, mode, zone),
     getIntelFeed: () => backend.getIntelFeed(),
     verifyIntel: (fileId) => backend.verifyIntel(fileId),
     annexIntel: (fileId, body) => backend.annexIntel(fileId, body),

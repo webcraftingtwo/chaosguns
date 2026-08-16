@@ -87,6 +87,80 @@ button { font-family: inherit; cursor: pointer; }
 
 .boot-inner { width: min(680px, 100%); }
 
+/* ---- cold-boot emblem ---- */
+
+.boot-mark {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 26px;
+  color: var(--accent);
+}
+
+.boot-emblem {
+  width: 84px;
+  height: 84px;
+  flex: none;
+  filter: drop-shadow(0 0 12px var(--accent-glow));
+}
+.boot-emblem path,
+.boot-emblem circle {
+  stroke-dasharray: var(--len, 400);
+  stroke-dashoffset: var(--len, 400);
+  animation: draw 0.9s ease-out forwards;
+}
+.bm-ring   { --len: 340; animation-delay: 0.05s; }
+.bm-ring-2 { --len: 280; animation-delay: 0.18s; }
+.bm-delta  { --len: 220; animation-delay: 0.30s; }
+.bm-bar    { --len: 40;  animation-delay: 0.62s; }
+.bm-stem   { --len: 24;  animation-delay: 0.70s; }
+.bm-tick   { --len: 60;  animation-delay: 0.78s; }
+
+@keyframes draw { to { stroke-dashoffset: 0; } }
+
+.boot-word { min-width: 0; }
+
+.boot-word-main {
+  font-size: clamp(26px, 7vw, 40px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  text-shadow: 0 0 16px var(--accent-glow);
+  line-height: 1.1;
+  animation: word-in 0.5s steps(6) 0.55s both;
+}
+.boot-word-sub {
+  margin-top: 6px;
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  color: var(--ink-dim);
+  animation: word-in 0.4s steps(4) 0.95s both;
+}
+
+@keyframes word-in {
+  from { opacity: 0; clip-path: inset(0 100% 0 0); }
+  to   { opacity: 1; clip-path: inset(0 0 0 0); }
+}
+
+.boot.rushed .boot-emblem path,
+.boot.rushed .boot-emblem circle,
+.boot.rushed .boot-word-main,
+.boot.rushed .boot-word-sub {
+  animation-duration: 0.01s;
+  animation-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .boot-emblem path, .boot-emblem circle { animation: none; stroke-dashoffset: 0; }
+  .boot-word-main, .boot-word-sub { animation: none; }
+}
+
+@media (max-width: 560px) {
+  .boot-mark { gap: 14px; margin-bottom: 20px; }
+  .boot-emblem { width: 60px; height: 60px; }
+  .boot-word-main { letter-spacing: 0.2em; }
+}
+
 .boot-line {
   color: var(--accent);
   text-shadow: 0 0 8px var(--accent-glow);
@@ -277,6 +351,7 @@ button { font-family: inherit; cursor: pointer; }
   color: var(--ink-dim);
   margin-bottom: 5px;
 }
+.field-hint { color: var(--ink-faint); letter-spacing: 0.1em; }
 
 .field input {
   width: 100%;
@@ -325,31 +400,95 @@ button { font-family: inherit; cursor: pointer; }
   position: fixed;
   inset: 0;
   z-index: 70;
-  background: rgba(3, 4, 3, 0.92);
+  background: rgba(3, 4, 3, 0.94);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px 16px;
+  animation: flash-bg-in 0.22s ease-out both;
+}
+
+.flash-inner {
+  width: min(620px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+/* rules sweep out from the centre, framing the stamp */
+.flash-rule {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(90deg,
+    transparent, var(--accent) 18%, var(--accent) 82%, transparent);
+  opacity: 0.6;
+  transform-origin: center;
+  animation: rule-sweep 0.55s cubic-bezier(0.2, 0.9, 0.25, 1) both;
 }
 
 .flash-stamp {
-  font-size: clamp(26px, 7vw, 54px);
+  font-size: clamp(24px, 6.2vw, 50px);
   font-weight: 700;
-  letter-spacing: 0.28em;
-  margin-right: -0.28em;
+  letter-spacing: 0.24em;
+  margin-right: -0.24em;
   color: var(--accent-bright);
   border: 3px solid var(--accent);
-  padding: 18px 34px;
+  padding: 16px 30px;
   text-shadow: 0 0 24px var(--accent-glow);
   box-shadow: 0 0 40px var(--accent-glow), inset 0 0 24px var(--accent-faint);
   transform: rotate(-2deg);
-  animation: stamp-in 0.5s cubic-bezier(0.16, 1.4, 0.4, 1) both;
+  animation: stamp-in 0.5s cubic-bezier(0.16, 1.4, 0.4, 1) 0.12s both;
   text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.flash-steps {
+  min-height: 54px;
+  width: 100%;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--ink-dim);
+  line-height: 1.9;
+}
+.flash-steps .boot-line { color: var(--ink-dim); text-shadow: none; }
+.flash-steps .boot-line.done { color: var(--accent); }
+
+/* exit: the terminal collapses the frame rather than cutting it */
+.flash.closing { animation: flash-bg-out 0.42s ease-in both; }
+.flash.closing .flash-stamp { animation: stamp-out 0.42s ease-in both; }
+.flash.closing .flash-rule { animation: rule-collapse 0.42s ease-in both; }
+.flash.closing .flash-steps { animation: flash-bg-out 0.28s ease-in both; }
+
+@keyframes flash-bg-in  { from { opacity: 0; } to { opacity: 1; } }
+@keyframes flash-bg-out { from { opacity: 1; } to { opacity: 0; } }
+
+@keyframes rule-sweep {
+  from { transform: scaleX(0); opacity: 0; }
+  to   { transform: scaleX(1); opacity: 0.6; }
+}
+@keyframes rule-collapse {
+  from { transform: scaleX(1); opacity: 0.6; }
+  to   { transform: scaleX(0.02); opacity: 0; }
 }
 
 @keyframes stamp-in {
   0%   { transform: rotate(-2deg) scale(1.6); opacity: 0; filter: blur(6px); }
   60%  { transform: rotate(-2deg) scale(0.97); opacity: 1; filter: blur(0); }
   100% { transform: rotate(-2deg) scale(1); }
+}
+@keyframes stamp-out {
+  0%   { transform: rotate(-2deg) scale(1); opacity: 1; filter: blur(0); }
+  40%  { transform: rotate(-2deg) scale(1.04); opacity: 0.9; }
+  100% { transform: rotate(-2deg) scale(0.92); opacity: 0; filter: blur(4px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flash, .flash-stamp, .flash-rule,
+  .flash.closing, .flash.closing .flash-stamp, .flash.closing .flash-rule {
+    animation-duration: 0.01s;
+  }
 }
 
 /* ---------------- extraction cipher modal ---------------- */
@@ -848,6 +987,99 @@ button { font-family: inherit; cursor: pointer; }
    the feed takes the full row */
 #compose-panel[hidden] ~ .feed-panel { grid-column: 1 / -1; }
 
+/* ---------------- theater map ---------------- */
+
+.map-wrap {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.map-select-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+#map-pick { width: auto; font-size: 11px; }
+.map-hint { font-size: 9px; letter-spacing: 0.14em; color: var(--ink-faint); }
+
+.map-stage {
+  position: relative;
+  background: var(--bg-inset);
+  border: 1px solid var(--accent-line);
+  color: var(--accent);
+  overflow: hidden;
+}
+.map-stage svg { display: block; width: 100%; height: auto; }
+
+/* zones */
+.map-zone {
+  fill: hsl(var(--accent-h) 60% 55% / 0.06);
+  stroke: var(--accent-line);
+  stroke-width: 1.4;
+  cursor: pointer;
+  transition: fill 0.16s, stroke 0.16s;
+}
+.map-zone:hover { fill: hsl(var(--accent-h) 60% 55% / 0.16); stroke: var(--accent); }
+.map-zone.has-intel { stroke: var(--accent); stroke-width: 1.8; }
+.map-zone.selected {
+  fill: hsl(var(--accent-h) 70% 55% / 0.26);
+  stroke: var(--accent-bright);
+  stroke-width: 2.2;
+}
+.map-zone.locked-only { stroke-dasharray: 5 4; }
+
+.map-zone-label {
+  fill: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  pointer-events: none;
+  text-anchor: middle;
+}
+.map-zone-count {
+  fill: var(--accent);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  text-anchor: middle;
+}
+.map-zone-count.none { fill: var(--ink-faint); }
+
+.map-extract {
+  fill: none;
+  stroke: var(--danger);
+  stroke-width: 1.6;
+}
+.map-extract-label {
+  fill: var(--danger);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.map-caption {
+  margin-top: 10px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+
+.map-intel-panel .feed-empty { padding: 20px 4px; }
+
+.zone-brief {
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  padding: 4px 0 10px;
+}
+
 /* compartment channel dress */
 .feed-panel.compartment { border-color: color-mix(in srgb, var(--danger) 55%, transparent); }
 .feed-panel.compartment .panel-title { color: var(--danger); border-bottom-color: color-mix(in srgb, var(--danger) 40%, transparent); }
@@ -1330,6 +1562,9 @@ select:focus {
 
   .compose-tags { grid-template-columns: 1fr; }
   .filter-row { grid-template-columns: 1fr; }
+  .map-wrap { grid-template-columns: 1fr; }
+  .map-zone-label { font-size: 17px; }
+  .map-zone-count { font-size: 15px; }
   .roster-row {
     grid-template-columns: 38px 1fr auto;
     grid-template-rows: auto auto;
