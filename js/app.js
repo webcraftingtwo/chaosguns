@@ -43,6 +43,10 @@
   let currentDossier = null;
   let currentSeed = null;
   let pickedClass = null;
+  let pickedTier = null;        // composer classification (null → own clearance)
+  let channel = 'network';      // 'network' | 'compartment'
+  let filterChip = 'ALL';       // ALL | class | MINE | WITHHELD
+  let feedCache = null;         // last get_intel_feed result
 
   const MESSAGES = {
     CALLSIGN_IN_SERVICE: 'CALLSIGN ALREADY IN SERVICE — CHOOSE ANOTHER',
@@ -528,12 +532,65 @@
     archiveEl.classList.remove('hidden');
     window.scrollTo(0, 0);
     $('#a-clearance').textContent = `CLEARANCE: ${currentDossier.clearance}`;
+    setChannel('network');
     buildClassPicker();
+    buildTierPicker();
+    buildFilterChips();
 
     const blocks = archiveEl.querySelectorAll('.decrypt');
     blocks.forEach((b) => b.classList.remove('decrypted'));
     FX.staggerIn(blocks, 110);
     await refreshFeed();
+  }
+
+  /* ---- channels: the open network vs. the compartment ---- */
+
+  function setChannel(next) {
+    channel = next;
+    const inCompartment = channel === 'compartment';
+    $('#ch-network').classList.toggle('active', !inCompartment);
+    $('#ch-network').setAttribute('aria-selected', String(!inCompartment));
+    $('#ch-compartment').classList.toggle('active', inCompartment);
+    $('#ch-compartment').setAttribute('aria-selected', String(inCompartment));
+    $('#feed-panel').classList.toggle('compartment', inCompartment);
+
+    const insider = currentDossier.clearanceIndex === 4;
+    $('#feed-title').childNodes[0].textContent = inCompartment
+      ? 'COMPARTMENT CHANNEL '
+      : 'NETWORK DROPS ';
+    // filing into the compartment is insider-only; the composer stays
+    // for the open network either way
+    $('#compose-panel').hidden = inCompartment && !insider;
+    $('#feed-filters').hidden = inCompartment && !insider;
+    $('#compose-title').textContent = inCompartment ? 'FILE TO THE COMPARTMENT' : 'FILE NEW INTEL';
+    $('#compose-note').textContent = inCompartment
+      ? 'COMPARTMENT DROPS ARE EYES-ONLY — VISIBLE TO COMPARTMENTED OPERATORS ALONE.'
+      : 'DROPS TRANSMIT AT THE SELECTED CLASSIFICATION. CONFIRMATION BY 2 OPERATORS MARKS INTEL VERIFIED AND ADVANCES YOUR STANDING.';
+    $('#c-tier-row').hidden = inCompartment || currentDossier.clearanceIndex === 0;
+  }
+
+  /* ---- composer pickers ---- */
+
+  function buildTierPicker() {
+    const wrap = $('#c-tiers');
+    wrap.innerHTML = '';
+    const max = currentDossier.clearanceIndex;
+    $('#c-tier-row').hidden = max === 0 || channel === 'compartment';
+    if (pickedTier === null || pickedTier > max) pickedTier = max;
+    for (let i = 0; i <= max; i++) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'tier-pick' + (pickedTier === i ? ' picked' : '');
+      b.textContent = intelDB.TIERS[i];
+      b.dataset.tier = String(i);
+      b.addEventListener('click', () => {
+        pickedTier = i;
+        wrap.querySelectorAll('.tier-pick').forEach((n) =>
+          n.classList.toggle('picked', Number(n.dataset.tier) === i)
+        );
+      });
+      wrap.appendChild(b);
+    }
   }
 
   async function closeArchive() {
@@ -575,17 +632,21 @@
     if (title.length < 4 || title.length > 80) return composeMsg(MESSAGES.BAD_TITLE);
     if (body.length < 20 || body.length > 2000) return composeMsg(MESSAGES.BAD_BODY);
 
+    const tier = channel === 'compartment' ? 4 : (pickedTier ?? currentDossier.clearanceIndex);
+
     const btn = $('#c-submit');
     btn.disabled = true;
     composeMsg('… TRANSMITTING TO RELAY', true);
     try {
-      const res = await intelDB.fileIntel(pickedClass, title, body);
+      const res = await intelDB.fileIntel(pickedClass, title, body, tier);
       if (!res.ok) return composeMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
       currentDossier = res.dossier;
       $('#c-title').value = '';
       $('#c-body').value = '';
       composeMsg(
-        `INTEL FILED — CLASSIFIED ${currentDossier.clearance} // AWAITING VERIFICATION`,
+        channel === 'compartment'
+          ? 'FILED TO THE COMPARTMENT — EYES ONLY'
+          : `INTEL FILED — CLASSIFIED ${intelDB.TIERS[tier]} // AWAITING VERIFICATION`,
         true
       );
       await refreshFeed();
@@ -594,10 +655,39 @@
     }
   }
 
+  /* ---- feed: fetch once, render per channel + filters ---- */
+
+  function buildFilterChips() {
+    const wrap = $('#f-chips');
+    wrap.innerHTML = '';
+    const chips = ['ALL', ...intelDB.CLASSES, 'MINE', 'WITHHELD'];
+    for (const c of chips) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip' + (filterChip === c ? ' picked' : '');
+      b.textContent = c;
+      b.addEventListener('click', () => {
+        filterChip = c;
+        wrap.querySelectorAll('.chip').forEach((n) =>
+          n.classList.toggle('picked', n.textContent === c)
+        );
+        renderFeed();
+      });
+      wrap.appendChild(b);
+    }
+  }
+
   async function refreshFeed() {
+    feedCache = await intelDB.getIntelFeed();
+    renderFeed();
+  }
+
+  function renderFeed() {
     const feedEl = $('#feed');
-    const res = await intelDB.getIntelFeed();
     feedEl.innerHTML = '';
+    const res = feedCache;
+    if (!res) return;
+
     if (!res.ok) {
       const li = document.createElement('li');
       li.className = 'feed-empty';
@@ -609,21 +699,73 @@
       return;
     }
 
-    const files = res.files || [];
-    const withheld = files.filter((f) => f.locked).length;
-    $('#feed-count').textContent =
-      `${files.length} ON FILE // ${withheld} WITHHELD`;
+    const all = res.files || [];
+    const inCompartment = channel === 'compartment';
+    const insider = currentDossier.clearanceIndex === 4;
 
-    if (files.length === 0) {
+    /* the compartment channel: eyes-only view of tier-4 files */
+    if (inCompartment && !insider) {
+      const count = all.filter((f) => f.clearanceIndex === 4).length;
+      $('#feed-count').textContent = 'ACCESS DENIED';
       const li = document.createElement('li');
-      li.className = 'feed-empty';
-      li.textContent = 'NO DROPS ON FILE AT ANY CLEARANCE. FILE THE FIRST.';
+      li.className = 'compartment-denied';
+      li.innerHTML = `
+        <div class="cd-stamp">EYES ONLY</div>
+        <div class="cd-line">${count} FILE${count === 1 ? '' : 'S'} INSIDE THE COMPARTMENT.</div>
+        <div class="cd-sub">COMPARTMENTED CLEARANCE REQUIRED. ACCESS BY INVITATION — A KEY MUST FIND YOU.</div>`;
       feedEl.appendChild(li);
       return;
     }
 
-    for (const f of files) {
-      feedEl.appendChild(f.locked ? lockedDropRow(f) : dropRow(f));
+    let files = inCompartment
+      ? all.filter((f) => f.clearanceIndex === 4)
+      : all;
+
+    /* chip filter */
+    if (filterChip === 'MINE') files = files.filter((f) => !f.locked && f.mine);
+    else if (filterChip === 'WITHHELD') files = files.filter((f) => f.locked);
+    else if (filterChip !== 'ALL') files = files.filter((f) => f.class === filterChip);
+
+    /* text search — locked rows carry no text, so a query excludes them */
+    const q = $('#f-search').value.trim().toLowerCase();
+    if (q) {
+      files = files.filter((f) =>
+        !f.locked &&
+        (f.title.toLowerCase().includes(q) ||
+         f.body.toLowerCase().includes(q) ||
+         f.author.toLowerCase().includes(q))
+      );
+    }
+
+    const withheld = (inCompartment ? [] : all).filter((f) => f.locked).length;
+    $('#feed-count').textContent = inCompartment
+      ? `${files.length} EYES-ONLY FILE${files.length === 1 ? '' : 'S'}`
+      : `${all.length} ON FILE // ${withheld} WITHHELD`;
+
+    if (files.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = q
+        ? 'NO MATCHES AT YOUR CLEARANCE.'
+        : inCompartment
+          ? 'THE COMPARTMENT IS EMPTY. FILE THE FIRST EYES-ONLY DROP.'
+          : filterChip === 'MINE'
+            ? 'NO DROPS OF YOURS ON FILE YET. THE COMPOSER IS RIGHT THERE.'
+            : filterChip === 'WITHHELD'
+              ? 'NOTHING WITHHELD — EVERYTHING ON FILE IS AT YOUR CLEARANCE.'
+              : 'NO DROPS ON FILE AT ANY CLEARANCE. FILE THE FIRST.';
+      feedEl.appendChild(li);
+    } else {
+      for (const f of files) {
+        feedEl.appendChild(f.locked ? lockedDropRow(f) : dropRow(f));
+      }
+    }
+
+    if (q && withheld > 0 && filterChip !== 'WITHHELD') {
+      const note = document.createElement('li');
+      note.className = 'feed-note';
+      note.textContent = `${withheld} WITHHELD FILE${withheld === 1 ? '' : 'S'} NOT SEARCHABLE AT YOUR CLEARANCE`;
+      feedEl.appendChild(note);
     }
   }
 
@@ -761,6 +903,9 @@
   $('#btn-archive').addEventListener('click', openArchive);
   $('#btn-to-dossier').addEventListener('click', closeArchive);
   $('#c-submit').addEventListener('click', onTransmit);
+  $('#ch-network').addEventListener('click', () => { setChannel('network'); buildTierPicker(); renderFeed(); });
+  $('#ch-compartment').addEventListener('click', () => { setChannel('compartment'); buildTierPicker(); renderFeed(); });
+  $('#f-search').addEventListener('input', renderFeed);
 
   // ENTER anywhere in the gate submits (no <form>, no page reload).
   [el.inCallsign, el.inPass, el.inConfirm, el.inCipher].forEach((input) =>
