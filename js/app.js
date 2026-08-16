@@ -609,20 +609,23 @@
     channel = next;
     const inCompartment = channel === 'compartment';
     const inMap = channel === 'map';
+    const inArmory = channel === 'armory';
 
     for (const [id, on] of [
       ['#ch-network', channel === 'network'],
       ['#ch-compartment', inCompartment],
       ['#ch-map', inMap],
+      ['#ch-armory', inArmory],
     ]) {
       $(id).classList.toggle('active', on);
       $(id).setAttribute('aria-selected', String(on));
     }
 
-    // the map is its own layout; the composer/feed grid stands down
+    // map and armory are their own layouts; the composer/feed grid stands down
     $('#map-wrap').classList.toggle('hidden', !inMap);
-    document.querySelector('.archive-grid').classList.toggle('hidden', inMap);
-    if (inMap) return;
+    $('#armory-wrap').classList.toggle('hidden', !inArmory);
+    document.querySelector('.archive-grid').classList.toggle('hidden', inMap || inArmory);
+    if (inMap || inArmory) return;
 
     $('#feed-panel').classList.toggle('compartment', inCompartment);
 
@@ -686,6 +689,8 @@
         wrap.querySelectorAll('.class-pick').forEach((n) =>
           n.classList.toggle('picked', n.textContent === cls)
         );
+        // ENGINEER is the loadout class — open the bench for them
+        if (cls === 'ENGINEER' && !buildOn) setBuildOn(true);
       });
       wrap.appendChild(b);
     }
@@ -713,12 +718,14 @@
       const res = await intelDB.fileIntel(
         pickedClass, title, body, tier,
         $('#c-map').value || null, pickedMode,
-        $('#c-map').value ? ($('#c-zone').value || null) : null
+        $('#c-map').value ? ($('#c-zone').value || null) : null,
+        currentBuild()
       );
       if (!res.ok) return composeMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
       currentDossier = res.dossier;
       $('#c-title').value = '';
       $('#c-body').value = '';
+      resetBuild();
       composeMsg(
         channel === 'compartment'
           ? 'FILED TO THE COMPARTMENT — EYES ONLY'
@@ -787,6 +794,211 @@
       o.value = z.name;
       o.textContent = z.name;
       sel.appendChild(o);
+    }
+  }
+
+  /* ============================================================
+     ARMORY — weapon builds rendered as blueprint schematics
+     ============================================================ */
+
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
+  /**
+   * A build → a blueprint panel: archetype outline, numbered pins on
+   * the filled slots, numbered legend beneath. Outline markup comes
+   * from weapons.js (ours); every operator-supplied string goes in
+   * through textContent.
+   */
+  function renderBlueprint(build) {
+    const arch = archetypeFor(build.weapon);
+    const meta = weaponByName(build.weapon);
+    const slots = build.slots || {};
+
+    const wrap = document.createElement('div');
+    wrap.className = 'blueprint';
+
+    const head = document.createElement('div');
+    head.className = 'bp-head';
+    head.append(span('bp-weapon', build.weapon));
+    if (meta) head.append(span('', meta.family));
+    const filled = arch.slots.filter((s) => slots[s.key]).length;
+    head.append(span('bp-fill', `${filled} / ${arch.slots.length} SLOTS FITTED`));
+    wrap.appendChild(head);
+
+    const stage = document.createElement('div');
+    stage.className = 'bp-stage';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', arch.viewBox);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `${build.weapon} build schematic`);
+    svg.innerHTML = arch.paths; // trusted: weapons.js
+
+    let n = 0;
+    for (const s of arch.slots) {
+      if (!slots[s.key]) continue;
+      n += 1;
+      const [x, y] = s.at;
+      const pin = document.createElementNS(SVG_NS, 'circle');
+      pin.setAttribute('class', 'bp-pin');
+      pin.setAttribute('cx', x);
+      pin.setAttribute('cy', y);
+      pin.setAttribute('r', 10);
+      const num = document.createElementNS(SVG_NS, 'text');
+      num.setAttribute('class', 'bp-pin-num');
+      num.setAttribute('x', x);
+      num.setAttribute('y', y + 4);
+      num.textContent = String(n);
+      svg.append(pin, num);
+    }
+    stage.appendChild(svg);
+    wrap.appendChild(stage);
+
+    const legend = document.createElement('ol');
+    legend.className = 'bp-legend';
+    let m = 0;
+    for (const s of arch.slots) {
+      const val = slots[s.key];
+      const li = document.createElement('li');
+      if (val) {
+        m += 1;
+        li.append(span('bp-num', String(m)));
+      } else {
+        li.className = 'empty';
+        li.append(span('bp-num', '–'));
+      }
+      li.append(span('bp-slot', s.key), span('bp-val', val || 'EMPTY'));
+      legend.appendChild(li);
+    }
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  /* ---- composer: the build editor ---- */
+
+  let buildOn = false;
+  let buildWeapon = WEAPONS[0].name;
+  let buildSlots = {};
+
+  function buildWeaponPicker() {
+    const sel = $('#c-weapon');
+    if (sel.options.length) return;
+    let family = null;
+    let group = null;
+    for (const w of WEAPONS) {
+      if (w.family !== family) {
+        family = w.family;
+        group = document.createElement('optgroup');
+        group.label = family;
+        sel.appendChild(group);
+      }
+      const o = document.createElement('option');
+      o.value = w.name;
+      o.textContent = w.name;
+      group.appendChild(o);
+    }
+    sel.value = buildWeapon;
+  }
+
+  function renderBuildSlots() {
+    const arch = archetypeFor(buildWeapon);
+    const wrap = $('#c-build-slots');
+    wrap.innerHTML = '';
+    for (const s of arch.slots) {
+      const row = document.createElement('div');
+      row.className = 'build-slot';
+      row.append(span('build-slot-label', s.key));
+      const sel = document.createElement('select');
+      sel.setAttribute('aria-label', s.key);
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '— EMPTY —';
+      sel.appendChild(none);
+      for (const opt of (ATTACHMENTS[s.key] || [])) {
+        const o = document.createElement('option');
+        o.value = opt;
+        o.textContent = opt;
+        sel.appendChild(o);
+      }
+      sel.value = buildSlots[s.key] || '';
+      sel.addEventListener('change', () => {
+        if (sel.value) buildSlots[s.key] = sel.value;
+        else delete buildSlots[s.key];
+        renderBuildPreview();
+      });
+      row.appendChild(sel);
+      wrap.appendChild(row);
+    }
+  }
+
+  function renderBuildPreview() {
+    const host = $('#c-build-preview');
+    host.innerHTML = '';
+    host.appendChild(renderBlueprint({ weapon: buildWeapon, slots: buildSlots }));
+  }
+
+  function setBuildOn(on) {
+    buildOn = on;
+    const btn = $('#c-build-toggle');
+    btn.setAttribute('aria-pressed', String(on));
+    btn.textContent = on ? '− REMOVE WEAPON BUILD' : '+ ATTACH WEAPON BUILD';
+    $('#c-build').hidden = !on;
+    if (on) {
+      buildWeaponPicker();
+      renderBuildSlots();
+      renderBuildPreview();
+    }
+  }
+
+  function currentBuild() {
+    if (!buildOn) return null;
+    return { weapon: buildWeapon, slots: { ...buildSlots } };
+  }
+
+  function resetBuild() {
+    buildSlots = {};
+    setBuildOn(false);
+  }
+
+  /* ---- the ARMORY channel ---- */
+
+  function renderArmory() {
+    const listEl = $('#armory-feed');
+    const sel = $('#a-weapon');
+    listEl.innerHTML = '';
+
+    const all = (feedCache?.files || []).filter((f) => f.build || f.buildWeapon);
+    const names = [...new Set(all.map((f) => f.build ? f.build.weapon : f.buildWeapon))].sort();
+
+    const keep = sel.value;
+    sel.innerHTML = '<option value="">ALL WEAPONS ON FILE</option>';
+    for (const nm of names) {
+      const o = document.createElement('option');
+      o.value = nm;
+      o.textContent = nm;
+      sel.appendChild(o);
+    }
+    sel.value = names.includes(keep) ? keep : '';
+
+    const files = sel.value
+      ? all.filter((f) => (f.build ? f.build.weapon : f.buildWeapon) === sel.value)
+      : all;
+    const sealed = files.filter((f) => f.locked).length;
+    $('#armory-count').textContent = all.length
+      ? `${files.length} BUILD${files.length === 1 ? '' : 'S'}${sealed ? ` // ${sealed} SEALED` : ''}`
+      : '';
+
+    if (files.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = all.length
+        ? 'NO BUILDS ON FILE FOR THAT WEAPON.'
+        : 'NO BUILDS ON FILE. ATTACH ONE TO A DROP AND IT RACKS HERE.';
+      listEl.appendChild(li);
+      return;
+    }
+    const rerender = async () => { await refreshFeed(); renderArmory(); };
+    for (const f of files) {
+      listEl.appendChild(f.locked ? lockedDropRow(f) : dropRow(f, rerender));
     }
   }
 
@@ -1075,6 +1287,7 @@
 
     const foot = document.createElement('div');
     foot.className = 'drop-foot';
+    if (f.build) body.appendChild(renderBlueprint(f.build));
     const verif = f.isBurned
       ? span('drop-verif struck',
           `✕ BURN NOTICE — STRUCK BY THE NETWORK (${f.burns} BURN${f.burns === 1 ? '' : 'S'})`)
@@ -1257,6 +1470,17 @@
       (f.annexes > 0 ? ` ${f.annexes} FIELD NOTE${f.annexes === 1 ? '' : 'S'} SEALED WITH IT.` : '');
 
     li.append(head, title, body);
+
+    // the weapon is a tease; the attachments stay sealed
+    if (f.buildWeapon) {
+      const sealed = document.createElement('div');
+      sealed.className = 'bp-sealed';
+      sealed.append(document.createTextNode('WEAPON BUILD ON FILE — '));
+      const b = document.createElement('b');
+      b.textContent = f.buildWeapon;
+      sealed.append(b, document.createTextNode(' // ATTACHMENTS SEALED AT THIS CLEARANCE'));
+      li.appendChild(sealed);
+    }
     return li;
   }
 
@@ -1504,6 +1728,19 @@
   });
   $('#ch-map').addEventListener('click', () => {
     setChannel('map'); renderMapStage(); renderZoneFeed();
+  });
+  $('#ch-armory').addEventListener('click', () => { setChannel('armory'); renderArmory(); });
+  $('#a-weapon').addEventListener('change', renderArmory);
+  $('#c-build-toggle').addEventListener('click', () => setBuildOn(!buildOn));
+  $('#c-weapon').addEventListener('change', (e) => {
+    buildWeapon = e.target.value;
+    // keep only the attachments this weapon actually has slots for
+    const keys = archetypeFor(buildWeapon).slots.map((s) => s.key);
+    buildSlots = Object.fromEntries(
+      Object.entries(buildSlots).filter(([k]) => keys.includes(k))
+    );
+    renderBuildSlots();
+    renderBuildPreview();
   });
   $('#map-pick').addEventListener('change', (e) => {
     mapName = e.target.value;

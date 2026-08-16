@@ -7,7 +7,7 @@
   <title>DEAD DROP // ACCESS TERMINAL</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
   <!-- ?v= is bumped on every deploy so phones never mix new HTML with stale cached scripts -->
-  <link rel="stylesheet" href="css/style.css?v=8">
+  <link rel="stylesheet" href="css/style.css?v=9">
 </head>
 <body>
 
@@ -223,6 +223,23 @@
       <button id="ch-network" class="tab active" type="button" role="tab" aria-selected="true">NETWORK DROPS</button>
       <button id="ch-compartment" class="tab" type="button" role="tab" aria-selected="false">THE COMPARTMENT</button>
       <button id="ch-map" class="tab" type="button" role="tab" aria-selected="false">THEATER MAP</button>
+      <button id="ch-armory" class="tab" type="button" role="tab" aria-selected="false">ARMORY</button>
+    </div>
+
+    <!-- armory: builds on file, by weapon -->
+    <div class="armory-wrap decrypt hidden" id="armory-wrap">
+      <article class="panel armory-panel">
+        <h2 class="panel-title">
+          ARMORY <span class="panel-title-aside" id="armory-count"></span>
+        </h2>
+        <div class="armory-filters">
+          <select id="a-weapon" aria-label="weapon filter">
+            <option value="">ALL WEAPONS ON FILE</option>
+          </select>
+          <span class="map-hint">BUILDS RIDE ON INTEL DROPS — CONFIRM, BURN AND ANNEX THEM LIKE ANY FILE</span>
+        </div>
+        <ul class="feed" id="armory-feed"></ul>
+      </article>
     </div>
 
     <!-- theater map: clickable schematic + per-zone intel -->
@@ -277,6 +294,18 @@
             <option value="">— ANYWHERE ON THE MAP —</option>
           </select>
         </label>
+        <div class="build-toggle-row">
+          <button id="c-build-toggle" class="chip" type="button" aria-pressed="false">+ ATTACH WEAPON BUILD</button>
+        </div>
+        <div id="c-build" class="build-editor" hidden>
+          <label class="field">
+            <span class="field-label">WEAPON</span>
+            <select id="c-weapon" aria-label="weapon"></select>
+          </label>
+          <div class="build-preview" id="c-build-preview"></div>
+          <div class="build-slots" id="c-build-slots"></div>
+        </div>
+
         <label class="field">
           <span class="field-label">SUBJECT</span>
           <input id="c-title" type="text" autocomplete="off" spellcheck="false"
@@ -368,11 +397,12 @@
     </article>
   </section>
 
-  <script src="js/seed.js?v=8"></script>
-  <script src="js/maps.js?v=8"></script>
-  <script src="js/config.js?v=8"></script>
-  <script src="js/inteldb.js?v=8"></script>
-  <script src="js/fx.js?v=8"></script>
-  <script src="js/app.js?v=8"></script>
+  <script src="js/seed.js?v=9"></script>
+  <script src="js/maps.js?v=9"></script>
+  <script src="js/weapons.js?v=9"></script>
+  <script src="js/config.js?v=9"></script>
+  <script src="js/inteldb.js?v=9"></script>
+  <script src="js/fx.js?v=9"></script>
+  <script src="js/app.js?v=9"></script>
 </body>
 </html>

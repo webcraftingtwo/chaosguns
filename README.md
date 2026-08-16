@@ -21,6 +21,7 @@ is unavailable outside a secure context.)
 
 | File | Role |
 | --- | --- |
+| `js/weapons.js` | Armory vocabulary + blueprint outlines. Silhouettes are original schematic drawings per weapon *class* (rifle / smg / marksman / support / shotgun), not traced game art. Weapons, slot layouts and attachment lists are plain data — edit freely, nothing downstream cares. |
 | `js/maps.js` | Theater schematics for the map interface — original stylised diagrams drawn for this terminal (not game art). Zone names/geometry live here, not in the database, so renaming a zone or adding a theater needs no migration. |
 | `js/seed.js` | Pure functions. SHA-256 of the lowercased callsign → accent hue, operator ID (`OP-XXXX-NN`), insignia, and stable teaser numbers. Same callsign → identical dossier, nothing stored. |
 | `js/config.js` | Relay coordinates: Supabase project URL + publishable key (safe to ship — it only opens the RPC surface). Blank them to run fully offline on the mock. |
@@ -114,6 +115,14 @@ economy runs:
   pulls its intel. Drops tagged with a theater can be pinned to a zone from
   the composer. Withheld files still show their zone — the map tells you
   where the secrets are, never what they say.
+- **Armory / weapon builds.** A drop can carry a structured loadout
+  (`{ weapon, slots }`), rendered as a blueprint: the weapon's class
+  outline with numbered pins on every fitted slot and a numbered legend
+  beneath. Picking ENGINEER opens the bench automatically. The ARMORY
+  channel racks every build on file, filterable by weapon. A build above
+  your clearance shows the *weapon name* and nothing else — you learn an
+  AWM build exists, never what is bolted to it. Builds ride on ordinary
+  drops, so they are confirmed, burned and annexed like any other intel.
 - **Burn notices.** The inverse of verification: two burns from cleared
   operators strike a drop (struck title, red stamp, no further confirmation).
   If it was verified, verification is revoked and the author loses that
