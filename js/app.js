@@ -62,6 +62,10 @@
     ALREADY_VERIFIED: 'ALREADY CONFIRMED BY YOU',
     INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
     NOT_ON_FILE: 'FILE NOT ON RECORD',
+    KEY_REJECTED: 'KEY REJECTED — INVALID OR ALREADY BURNED',
+    KEY_LIMIT: 'KEY LIMIT REACHED — 3 UNREDEEMED KEYS MAXIMUM',
+    INSUFFICIENT_STANDING: 'TOP SECRET STANDING REQUIRED TO REDEEM',
+    ALREADY_COMPARTMENTED: 'YOU ARE ALREADY INSIDE THE COMPARTMENT',
   };
 
   const CLASS_DESCRIPTIONS = {
@@ -235,7 +239,43 @@
     await FX.wait(FX.reducedMotion ? 400 : 1150);
     el.flash.classList.add('hidden');
 
+    // Anything that happened while the operator was away lands first.
+    const disp = await intelDB.getDispatches();
+    if (disp.ok && disp.dispatches?.length) {
+      await showDispatches(disp.dispatches);
+    }
+
     await renderDossier(dossier, seed);
+  }
+
+  function dispatchLine(d) {
+    if (d.kind === 'INTEL_VERIFIED') {
+      return `▮ DROP CONFIRMED — "${d.payload.title}" VERIFIED BY THE NETWORK`;
+    }
+    if (d.kind === 'CLEARANCE_GRANTED') {
+      return `▮ CLEARANCE REVIEW PASSED — ${intelDB.TIERS[d.payload.clearanceIndex]} GRANTED`;
+    }
+    return '▮ DISPATCH RECEIVED';
+  }
+
+  function showDispatches(dispatches) {
+    const modal = $('#dispatch-modal');
+    const lines = $('#dispatch-lines');
+    const ack = $('#dispatch-ack');
+    lines.innerHTML = '';
+    ack.classList.add('hidden');
+    modal.classList.remove('hidden');
+    return new Promise(async (resolve) => {
+      // typeSequence uses textContent — operator-authored titles are safe
+      await FX.typeSequence(lines, dispatches.map(dispatchLine), { now: false }, {
+        charDelay: 8, lineDelay: 260,
+      });
+      ack.classList.remove('hidden');
+      ack.onclick = () => {
+        modal.classList.add('hidden');
+        resolve();
+      };
+    });
   }
 
   async function renderDossier(dossier, seed) {
@@ -252,17 +292,30 @@
     /* --- clearance --- */
     $('#d-clearance').textContent = dossier.clearance;
     const need = dossier.nextRequirement;
-    if (need !== null) {
+    const fill = $('#d-progress-fill');
+    if (dossier.clearanceIndex === 4) {
+      $('#d-progress-label').textContent = 'CEILING REACHED';
+      $('#d-progress-count').textContent = '—';
+      fill.style.width = '100%';
+      $('#d-progress-note').textContent =
+        'YOU ARE INSIDE THE COMPARTMENT. YOU MAY ISSUE KEYS TO OPERATORS AT TOP SECRET.';
+    } else if (dossier.nextTier === 'COMPARTMENTED') {
+      // the last door does not open by count
+      $('#d-progress-label').textContent = 'COMPARTMENTED — BY INVITATION ONLY';
+      $('#d-progress-count').textContent = '■';
+      fill.style.width = '0%';
+      $('#d-progress-note').textContent =
+        'THE LAST DOOR DOES NOT OPEN FROM YOUR SIDE. A COMPARTMENT KEY MUST FIND YOU.';
+    } else {
       $('#d-progress-label').textContent = `NEXT REVIEW: ${dossier.nextTier}`;
       $('#d-progress-count').textContent = `${dossier.verifiedCount} / ${need}`;
+      fill.style.width = `${Math.min(100, (dossier.verifiedCount / need) * 100)}%`;
       $('#d-progress-note').textContent =
         dossier.verifiedCount === 0
           ? `CLEARANCE RISES WHEN YOUR FILED INTEL IS VERIFIED BY OTHER OPERATORS. ${need} VERIFIED FILES OPEN ${dossier.nextTier} REVIEW.`
           : `${need - dossier.verifiedCount} MORE VERIFIED FILES OPEN ${dossier.nextTier} REVIEW.`;
-    } else {
-      $('#d-progress-label').textContent = 'CEILING REACHED';
-      $('#d-progress-count').textContent = '—';
     }
+    renderCompartmentZone(dossier);
 
     /* --- specialization --- */
     const specEl = $('#d-spec');
@@ -355,6 +408,88 @@
       FX.scramble(callsignEl, dossier.callsign.toUpperCase(), 700),
       FX.scramble(opidEl, seed.operatorId, 550),
     ]);
+  }
+
+  /**
+   * COMPARTMENT ZONE — the clearance panel's invitation mechanics.
+   * TOP SECRET operators get the key-redemption slot; COMPARTMENTED
+   * operators get the key-issuing console.
+   */
+  function renderCompartmentZone(dossier) {
+    const zone = $('#compartment-zone');
+    zone.innerHTML = '';
+    if (dossier.clearanceIndex === 3) {
+      zone.innerHTML = `
+        <div class="ck-row">
+          <input id="ck-input" type="text" autocomplete="off" spellcheck="false"
+                 maxlength="14" placeholder="CK-XXXX-XXXX" aria-label="compartment key">
+          <button id="ck-redeem" class="ck-btn" type="button">REDEEM KEY</button>
+        </div>
+        <p id="ck-msg" class="ck-msg" aria-live="polite"></p>`;
+      $('#ck-redeem').addEventListener('click', onRedeemKey);
+      $('#ck-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') onRedeemKey();
+      });
+    } else if (dossier.clearanceIndex === 4) {
+      zone.innerHTML = `
+        <button id="ck-issue" class="ck-btn" type="button">ISSUE COMPARTMENT KEY</button>
+        <div id="ck-out" class="ck-code hidden"></div>
+        <p id="ck-msg" class="ck-msg" aria-live="polite"></p>
+        <p class="ck-note">SINGLE USE. HAND IT TO ONE OPERATOR AT TOP SECRET — OFF-NETWORK.</p>`;
+      $('#ck-issue').addEventListener('click', onIssueKey);
+    }
+  }
+
+  async function onRedeemKey() {
+    const input = $('#ck-input');
+    const msg = $('#ck-msg');
+    const code = input.value.trim();
+    msg.classList.remove('ok');
+    if (!/^CK-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(code)) {
+      msg.textContent = '✕ ENTER THE FULL KEY (CK-XXXX-XXXX)';
+      return;
+    }
+    const btn = $('#ck-redeem');
+    btn.disabled = true;
+    try {
+      const res = await intelDB.redeemCompartmentKey(code);
+      if (!res.ok) {
+        msg.textContent = `✕ ${MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN'}`;
+        return;
+      }
+      // the last promotion gets the full ceremony
+      el.dossier.classList.add('hidden');
+      el.flashText.textContent = 'COMPARTMENTED';
+      el.flash.classList.remove('hidden');
+      await FX.wait(FX.reducedMotion ? 400 : 1150);
+      el.flash.classList.add('hidden');
+      el.dossier.classList.remove('hidden');
+      await renderDossier(res.dossier, currentSeed);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function onIssueKey() {
+    const btn = $('#ck-issue');
+    const out = $('#ck-out');
+    const msg = $('#ck-msg');
+    msg.classList.remove('ok');
+    msg.textContent = '';
+    btn.disabled = true;
+    try {
+      const res = await intelDB.issueCompartmentKey();
+      if (!res.ok) {
+        msg.textContent = `✕ ${MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN'}`;
+        return;
+      }
+      out.textContent = res.key;
+      out.classList.remove('hidden');
+      msg.classList.add('ok');
+      msg.textContent = 'KEY ISSUED — SHOWN HERE ONCE';
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   /**

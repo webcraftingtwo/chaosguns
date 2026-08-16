@@ -717,6 +717,106 @@ button { font-family: inherit; cursor: pointer; }
 .dossier-foot b { color: var(--accent); }
 .foot-classified { color: var(--danger); }
 
+/* ---------------- incoming dispatches ---------------- */
+
+.dispatch-panel {
+  width: min(560px, 100%);
+  padding: 26px 24px;
+}
+
+.dispatch-title {
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  border-bottom: 1px solid var(--accent-line);
+  padding-bottom: 10px;
+  margin-bottom: 16px;
+}
+
+.dispatch-lines {
+  min-height: 40px;
+  margin-bottom: 18px;
+}
+.dispatch-lines .boot-line {
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+/* ---------------- compartment zone (clearance panel) ---------------- */
+
+.compartment-zone:not(:empty) {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--ink-faint);
+}
+
+.ck-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.ck-row input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-inset);
+  border: 1px solid var(--ink-faint);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  padding: 8px 10px;
+  text-transform: uppercase;
+}
+.ck-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+.ck-row input::placeholder { color: var(--ink-faint); }
+
+.ck-btn {
+  background: var(--accent-faint);
+  border: 1px solid var(--accent);
+  color: var(--accent-bright);
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 8px 14px;
+  white-space: nowrap;
+}
+.ck-btn:hover { background: hsl(var(--accent-h) 60% 55% / 0.2); }
+.ck-btn:disabled { opacity: 0.45; cursor: wait; }
+
+.ck-code {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--accent-bright);
+  background: var(--bg-inset);
+  border: 1px dashed var(--accent);
+  padding: 10px;
+  margin: 8px 0;
+  text-align: center;
+  text-shadow: 0 0 10px var(--accent-glow);
+  user-select: all;
+}
+
+.ck-msg {
+  min-height: 16px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--danger);
+}
+.ck-msg.ok { color: var(--accent); }
+
+.ck-note {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  color: var(--ink-faint);
+  margin-top: 6px;
+}
+
 /* ---------------- intel archive ---------------- */
 
 .btn-accent {

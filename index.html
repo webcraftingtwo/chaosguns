@@ -99,6 +99,15 @@
     </div>
   </div>
 
+  <!-- ============ INCOMING DISPATCHES ============ -->
+  <div id="dispatch-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dispatch-title">
+    <div class="panel dispatch-panel">
+      <h2 id="dispatch-title" class="dispatch-title">INCOMING DISPATCHES // SINCE LAST CONTACT</h2>
+      <div id="dispatch-lines" class="dispatch-lines" aria-live="polite"></div>
+      <button id="dispatch-ack" class="btn-primary hidden" type="button">ACKNOWLEDGED</button>
+    </div>
+  </div>
+
   <!-- ============ OPERATOR DOSSIER ============ -->
   <section id="dossier" class="dossier hidden">
     <header class="dossier-topbar decrypt">
@@ -147,6 +156,7 @@
             CLEARANCE RISES WHEN YOUR FILED INTEL IS VERIFIED BY OTHER OPERATORS.
           </p>
         </div>
+        <div id="compartment-zone" class="compartment-zone"></div>
       </article>
 
       <!-- specialization -->

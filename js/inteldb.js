@@ -168,6 +168,28 @@ const intelDB = (() => {
         return rpc('verify_intel', { p_token: session.token, p_file_id: fileId });
       },
 
+      /** Unseen events queued while away; delivered exactly once. */
+      async getDispatches() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_dispatches', { p_token: session.token });
+      },
+
+      async issueCompartmentKey() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('issue_compartment_key', { p_token: session.token });
+      },
+
+      async redeemCompartmentKey(code) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        const r = await rpc('redeem_compartment_key', {
+          p_token: session.token, p_code: code,
+        });
+        return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
+      },
+
       setSession(operatorId, callsign) {
         writeSession({ operatorId, callsign, token: pendingToken || getSession()?.token || null });
         pendingToken = null;
@@ -374,11 +396,24 @@ const intelDB = (() => {
           const author = Object.values(db.operators).find((r) => r.id === file.operatorId);
           if (author) {
             author.verifiedCount = (author.verifiedCount || 0) + 1;
+            db.dispatches = db.dispatches || [];
+            db.dispatches.push({
+              operatorId: author.id, kind: 'INTEL_VERIFIED',
+              payload: { title: file.title, class: file.class },
+              createdAt: Date.now(), seen: false,
+            });
+            // auto-promote, but never into COMPARTMENTED (tier 4 is
+            // invitation-only via compartment keys)
             while (
-              (author.clearanceIndex || 0) < TIERS.length - 1 &&
+              (author.clearanceIndex || 0) < 3 &&
               author.verifiedCount >= TIER_REQUIREMENTS[(author.clearanceIndex || 0) + 1]
             ) {
               author.clearanceIndex = (author.clearanceIndex || 0) + 1;
+              db.dispatches.push({
+                operatorId: author.id, kind: 'CLEARANCE_GRANTED',
+                payload: { clearanceIndex: author.clearanceIndex },
+                createdAt: Date.now(), seen: false,
+              });
             }
           }
         }
@@ -388,6 +423,63 @@ const intelDB = (() => {
           verifications: file.verifications.length,
           isVerified: file.isVerified,
         };
+      },
+
+      async getDispatches() {
+        const db = loadDB();
+        const me = getSession()?.operatorId;
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const mine = (db.dispatches || []).filter(
+          (d) => d.operatorId === me && !d.seen
+        );
+        mine.forEach((d) => (d.seen = true));
+        saveDB(db);
+        return {
+          ok: true,
+          dispatches: mine
+            .sort((a, b) => a.createdAt - b.createdAt)
+            .map((d) => ({ kind: d.kind, payload: d.payload, createdAt: d.createdAt })),
+        };
+      },
+
+      async issueCompartmentKey() {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        if ((me.clearanceIndex || 0) < 4) return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        db.keys = db.keys || [];
+        if (db.keys.filter((k) => k.issuedBy === me.id && !k.redeemedAt).length >= 3) {
+          return { ok: false, code: 'KEY_LIMIT' };
+        }
+        const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+        const raw = new Uint8Array(8);
+        (globalThis.crypto?.getRandomValues)
+          ? crypto.getRandomValues(raw)
+          : raw.forEach((_, i) => (raw[i] = Math.floor(Math.random() * 256)));
+        const chars = Array.from(raw, (b) => alphabet[b % alphabet.length]).join('');
+        const code = `CK-${chars.slice(0, 4)}-${chars.slice(4, 8)}`;
+        db.keys.push({ code, issuedBy: me.id, redeemedAt: null });
+        saveDB(db);
+        return { ok: true, key: code };
+      },
+
+      async redeemCompartmentKey(codeIn) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        if ((me.clearanceIndex || 0) >= 4) return { ok: false, code: 'ALREADY_COMPARTMENTED' };
+        if ((me.clearanceIndex || 0) < 3) return { ok: false, code: 'INSUFFICIENT_STANDING' };
+        const code = codeIn.replace(/\s/g, '').toUpperCase();
+        const key = (db.keys || []).find((k) => k.code === code && !k.redeemedAt);
+        if (!key) return { ok: false, code: 'KEY_REJECTED' };
+        key.redeemedAt = Date.now();
+        me.clearanceIndex = 4;
+        saveDB(db);
+        return { ok: true, dossier: shapeDossier(toRaw(me)) };
       },
 
       setSession(operatorId, callsign) {
@@ -421,6 +513,9 @@ const intelDB = (() => {
     fileIntel: (cls, title, body) => backend.fileIntel(cls, title, body),
     getIntelFeed: () => backend.getIntelFeed(),
     verifyIntel: (fileId) => backend.verifyIntel(fileId),
+    getDispatches: () => backend.getDispatches(),
+    issueCompartmentKey: () => backend.issueCompartmentKey(),
+    redeemCompartmentKey: (code) => backend.redeemCompartmentKey(code),
 
     /**
      * CLEARANCE LADDER — the five tiers plus per-operator teaser

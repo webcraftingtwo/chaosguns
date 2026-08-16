@@ -86,8 +86,18 @@ economy runs:
 - **Verification.** Any operator with sufficient clearance can confirm
   someone else's drop (never their own, once each). At **2 confirmations**
   the drop flips to VERIFIED, credits the author's verified-file count, and
-  auto-promotes clearance when a tier requirement (3 / 8 / 20 / 50) is met —
+  auto-promotes clearance when a tier requirement (3 / 8 / 20) is met —
   all inside the `verify_intel` RPC, so the client can't forge progression.
+  Auto-promotion caps at TOP SECRET; the last tier is invitation-only.
+- **Dispatches.** Anything that happened while an operator was away — a drop
+  verified, clearance granted — queues in the `dispatches` table and is
+  delivered exactly once as an INCOMING DISPATCHES beat right after ACCESS
+  GRANTED on their next visit.
+- **Compartment keys.** COMPARTMENTED (tier 4) is never earned by count.
+  A COMPARTMENTED operator can issue up to 3 unredeemed single-use keys
+  (`CK-XXXX-XXXX`); an operator at TOP SECRET redeems one from the clearance
+  panel and is promoted on the spot. `HANDLER` is the compartment's origin
+  node — the first keys come from it.
 
 The archive ships with starter drops from the `HANDLER` account (SECRET
 clearance) — two readable at RESTRICTED, one CONFIDENTIAL and one SECRET, so
