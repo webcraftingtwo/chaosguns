@@ -987,6 +987,130 @@ button { font-family: inherit; cursor: pointer; }
    the feed takes the full row */
 #compose-panel[hidden] ~ .feed-panel { grid-column: 1 / -1; }
 
+/* ---------------- armory / weapon blueprints ---------------- */
+
+.build-toggle-row { margin-bottom: 12px; }
+#c-build-toggle[aria-pressed="true"] {
+  background: var(--accent-faint);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+
+.build-editor {
+  border: 1px dashed var(--accent-line);
+  padding: 12px;
+  margin-bottom: 14px;
+}
+.build-editor .field { margin-bottom: 10px; }
+
+.build-preview { margin-bottom: 10px; }
+
+.build-slots { display: grid; gap: 7px; }
+.build-slot {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 8px;
+  align-items: center;
+}
+.build-slot-label {
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--ink-dim);
+}
+.build-slot select { font-size: 10px; padding: 6px 8px; }
+
+/* the blueprint itself */
+.blueprint {
+  margin-top: 10px;
+  border: 1px solid var(--accent-line);
+  background: var(--bg-inset);
+  padding: 10px 12px 12px;
+}
+
+.bp-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent-line) 70%, transparent);
+  padding-bottom: 7px;
+  margin-bottom: 8px;
+}
+.bp-weapon {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--accent);
+}
+.bp-fill { margin-left: auto; color: var(--ink-dim); }
+
+.bp-stage { color: var(--accent); }
+.bp-stage svg {
+  display: block;
+  width: 100%;
+  max-width: 520px;   /* keep it a technical drawing, not a poster */
+  margin: 0 auto;
+  height: auto;
+}
+.bp-stage path { fill: none; stroke: currentColor; stroke-width: 1.6; }
+
+.bp-pin { fill: var(--bg-inset); stroke: var(--accent); stroke-width: 1.4; }
+.bp-pin-num {
+  fill: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-anchor: middle;
+  pointer-events: none;
+}
+.bp-lead { stroke: var(--accent-line); stroke-width: 1; stroke-dasharray: 3 3; fill: none; }
+
+.bp-legend {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 14px;
+  margin-top: 8px;
+}
+.bp-legend li {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+  display: flex;
+  gap: 7px;
+}
+.bp-legend .bp-num {
+  color: var(--accent);
+  font-weight: 700;
+  flex: none;
+}
+.bp-legend .bp-slot { color: var(--ink-faint); flex: none; min-width: 74px; }
+.bp-legend .bp-val { color: var(--ink); }
+.bp-legend li.empty .bp-val { color: var(--ink-faint); }
+
+/* sealed build on a locked drop */
+.bp-sealed {
+  margin-top: 8px;
+  border: 1px dashed color-mix(in srgb, var(--danger) 45%, transparent);
+  padding: 8px 10px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-faint);
+}
+.bp-sealed b { color: var(--danger); letter-spacing: 0.16em; }
+
+.armory-filters {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+#a-weapon { width: auto; font-size: 11px; }
+
 /* ---------------- theater map ---------------- */
 
 .map-wrap {
