@@ -7,7 +7,7 @@
   <title>DEAD DROP // ACCESS TERMINAL</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
   <!-- ?v= is bumped on every deploy so phones never mix new HTML with stale cached scripts -->
-  <link rel="stylesheet" href="css/style.css?v=4">
+  <link rel="stylesheet" href="css/style.css?v=5">
 </head>
 <body>
 
@@ -197,12 +197,21 @@
       </div>
     </header>
 
+    <div class="archive-channels decrypt" role="tablist">
+      <button id="ch-network" class="tab active" type="button" role="tab" aria-selected="true">NETWORK DROPS</button>
+      <button id="ch-compartment" class="tab" type="button" role="tab" aria-selected="false">THE COMPARTMENT</button>
+    </div>
+
     <div class="archive-grid">
 
       <!-- composer -->
-      <article class="panel compose-panel decrypt">
-        <h2 class="panel-title">FILE NEW INTEL</h2>
+      <article class="panel compose-panel decrypt" id="compose-panel">
+        <h2 class="panel-title" id="compose-title">FILE NEW INTEL</h2>
         <div class="compose-classes" id="c-classes" role="group" aria-label="intel class"></div>
+        <div id="c-tier-row" hidden>
+          <span class="field-label">CLASSIFY AT</span>
+          <div class="compose-tiers" id="c-tiers" role="group" aria-label="classification tier"></div>
+        </div>
         <label class="field">
           <span class="field-label">SUBJECT</span>
           <input id="c-title" type="text" autocomplete="off" spellcheck="false"
@@ -215,25 +224,30 @@
         </label>
         <p id="c-msg" class="gate-msg" aria-live="polite"></p>
         <button id="c-submit" class="btn-primary" type="button">TRANSMIT</button>
-        <p class="compose-note">
-          DROPS TRANSMIT AT YOUR CURRENT CLEARANCE. CONFIRMATION BY 2 OPERATORS
+        <p class="compose-note" id="compose-note">
+          DROPS TRANSMIT AT THE SELECTED CLASSIFICATION. CONFIRMATION BY 2 OPERATORS
           MARKS INTEL VERIFIED AND ADVANCES YOUR STANDING.
         </p>
       </article>
 
-      <!-- network feed -->
-      <article class="panel feed-panel decrypt">
-        <h2 class="panel-title">NETWORK DROPS <span class="panel-title-aside" id="feed-count"></span></h2>
+      <!-- feed -->
+      <article class="panel feed-panel decrypt" id="feed-panel">
+        <h2 class="panel-title" id="feed-title">NETWORK DROPS <span class="panel-title-aside" id="feed-count"></span></h2>
+        <div class="feed-filters" id="feed-filters">
+          <input id="f-search" type="search" autocomplete="off" spellcheck="false"
+                 placeholder="SEARCH THE ARCHIVE — SUBJECT, REPORT, OPERATOR" aria-label="search the archive">
+          <div class="feed-chips" id="f-chips" role="group" aria-label="feed filter"></div>
+        </div>
         <ul class="feed" id="feed"></ul>
       </article>
 
     </div>
   </section>
 
-  <script src="js/seed.js?v=4"></script>
-  <script src="js/config.js?v=4"></script>
-  <script src="js/inteldb.js?v=4"></script>
-  <script src="js/fx.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="js/seed.js?v=5"></script>
+  <script src="js/config.js?v=5"></script>
+  <script src="js/inteldb.js?v=5"></script>
+  <script src="js/fx.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>

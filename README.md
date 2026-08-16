@@ -77,12 +77,19 @@ from contribution mix — `PENDING` until earned.
 The INTEL ARCHIVE view (reachable from the dossier topbar) is where the
 economy runs:
 
-- **Filing.** An operator picks a class, writes a subject + field report, and
-  transmits. Drops are classified at the author's clearance at filing time
-  and immediately count toward specialization.
-- **Feed.** Newest first. Drops above your clearance appear as locked stubs —
-  class, tier, and date only; the title and payload never leave the database
-  (`get_intel_feed` builds redacted rows server-side).
+- **Filing.** An operator picks a class, a classification tier (any tier up
+  to their own clearance — enforced server-side), writes a subject + field
+  report, and transmits. A COMPARTMENTED operator can publish beginner intel
+  at RESTRICTED or keep a drop eyes-only at tier 4. Filing immediately counts
+  toward specialization.
+- **Feed.** Newest first, with client-side text search (subject / report /
+  operator) and filter chips (class, MINE, WITHHELD). Drops above your
+  clearance appear as locked stubs — class, tier, and date only; the title
+  and payload never leave the database (`get_intel_feed` builds redacted rows
+  server-side), so locked files are also unsearchable by design.
+- **The Compartment.** A second channel tab in the archive. COMPARTMENTED
+  operators see and file eyes-only tier-4 drops there; everyone else gets an
+  ACCESS DENIED panel showing only the real count of files inside.
 - **Verification.** Any operator with sufficient clearance can confirm
   someone else's drop (never their own, once each). At **2 confirmations**
   the drop flips to VERIFIED, credits the author's verified-file count, and

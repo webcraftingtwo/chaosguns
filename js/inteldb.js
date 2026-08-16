@@ -145,11 +145,12 @@ const intelDB = (() => {
         return r.ok ? { ok: true, dossier: shapeDossier(r.dossier) } : r;
       },
 
-      async fileIntel(cls, title, body) {
+      async fileIntel(cls, title, body, clearance = null) {
         const session = getSession();
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
         const r = await rpc('file_intel', {
           p_token: session.token, p_class: cls, p_title: title, p_body: body,
+          p_clearance: clearance,
         });
         return r.ok
           ? { ok: true, dossier: shapeDossier(r.dossier), fileId: r.fileId }
@@ -308,7 +309,7 @@ const intelDB = (() => {
           : { ok: false, code: 'SESSION_INVALID' };
       },
 
-      async fileIntel(cls, title, body) {
+      async fileIntel(cls, title, body, clearance = null) {
         const db = loadDB();
         const me = Object.values(db.operators).find(
           (r) => r.id === getSession()?.operatorId
@@ -321,6 +322,10 @@ const intelDB = (() => {
         if (body.trim().length < 20 || body.trim().length > 2000) {
           return { ok: false, code: 'BAD_BODY' };
         }
+        const tier = clearance ?? (me.clearanceIndex || 0);
+        if (tier < 0 || tier > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'BAD_CLEARANCE' };
+        }
         db.files = db.files || [];
         const file = {
           id: globalThis.crypto?.randomUUID
@@ -328,7 +333,7 @@ const intelDB = (() => {
             : `f-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
           operatorId: me.id,
           class: cls,
-          clearanceIndex: me.clearanceIndex || 0,
+          clearanceIndex: tier,
           title: title.trim(),
           body: body.trim(),
           createdAt: Date.now(),
@@ -510,7 +515,7 @@ const intelDB = (() => {
     authenticate: (cs, pw) => backend.authenticate(cs, pw),
     recoverWithCipher: (cs, ci, pw) => backend.recoverWithCipher(cs, ci, pw),
     getDossier: (operatorId) => backend.getDossier(operatorId),
-    fileIntel: (cls, title, body) => backend.fileIntel(cls, title, body),
+    fileIntel: (cls, title, body, clearance) => backend.fileIntel(cls, title, body, clearance),
     getIntelFeed: () => backend.getIntelFeed(),
     verifyIntel: (fileId) => backend.verifyIntel(fileId),
     getDispatches: () => backend.getDispatches(),
