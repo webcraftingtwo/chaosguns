@@ -180,6 +180,18 @@ const intelDB = (() => {
         return rpc('get_roster', { p_token: session.token });
       },
 
+      async getOperatorFile(callsign) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_operator_file', { p_token: session.token, p_callsign: callsign });
+      },
+
+      async burnIntel(fileId) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('burn_intel', { p_token: session.token, p_file_id: fileId });
+      },
+
       async getIntelFeed() {
         const session = getSession();
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
@@ -273,6 +285,35 @@ const intelDB = (() => {
         clearanceIndex: record.clearanceIndex || 0,
         verifiedCount: record.verifiedCount || 0,
         contributions: record.contributions || {},
+      };
+    }
+
+    /* mirror of the SQL _file_row builder */
+    function mockFileRow(db, f, viewer) {
+      const annexes = (db.annexes || []).filter((a) => a.fileId === f.id).length;
+      if (f.clearanceIndex > (viewer.clearanceIndex || 0)) {
+        return {
+          id: f.id, locked: true, class: f.class,
+          clearanceIndex: f.clearanceIndex, createdAt: f.createdAt,
+          map: f.map || null, mode: f.mode || null, annexes,
+        };
+      }
+      const author = Object.values(db.operators).find((r) => r.id === f.operatorId);
+      const burnerIds = f.burnerIds || [];
+      return {
+        id: f.id, locked: false, class: f.class,
+        clearanceIndex: f.clearanceIndex,
+        title: f.title, body: f.body,
+        author: author ? author.callsign : 'UNKNOWN',
+        mine: f.operatorId === viewer.id,
+        createdAt: f.createdAt,
+        verifications: f.verifications.length,
+        isVerified: f.isVerified,
+        verifiedByMe: f.verifications.includes(viewer.id),
+        map: f.map || null, mode: f.mode || null, annexes,
+        isBurned: f.isBurned || false,
+        burns: burnerIds.length,
+        burnedByMe: burnerIds.includes(viewer.id),
       };
     }
 
@@ -384,29 +425,7 @@ const intelDB = (() => {
           .slice()
           .sort((a, b) => b.createdAt - a.createdAt)
           .slice(0, 100)
-          .map((f) => {
-            const annexes = (db.annexes || []).filter((a) => a.fileId === f.id).length;
-            if (f.clearanceIndex > myClearance) {
-              return {
-                id: f.id, locked: true, class: f.class,
-                clearanceIndex: f.clearanceIndex, createdAt: f.createdAt,
-                map: f.map || null, mode: f.mode || null, annexes,
-              };
-            }
-            const author = Object.values(db.operators).find((r) => r.id === f.operatorId);
-            return {
-              id: f.id, locked: false, class: f.class,
-              clearanceIndex: f.clearanceIndex,
-              title: f.title, body: f.body,
-              author: author ? author.callsign : 'UNKNOWN',
-              mine: f.operatorId === me.id,
-              createdAt: f.createdAt,
-              verifications: f.verifications.length,
-              isVerified: f.isVerified,
-              verifiedByMe: f.verifications.includes(me.id),
-              map: f.map || null, mode: f.mode || null, annexes,
-            };
-          });
+          .map((f) => mockFileRow(db, f, me));
         return { ok: true, clearanceIndex: myClearance, files };
       },
 
@@ -422,6 +441,10 @@ const intelDB = (() => {
           return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
         }
         if (file.operatorId === me.id) return { ok: false, code: 'OWN_FILE' };
+        if (file.isBurned) return { ok: false, code: 'BURNED' };
+        if ((file.burnerIds || []).includes(me.id)) {
+          return { ok: false, code: 'CONFLICTED' };
+        }
         if (file.verifications.includes(me.id)) {
           return { ok: false, code: 'ALREADY_VERIFIED' };
         }
@@ -518,6 +541,73 @@ const intelDB = (() => {
                 body: a.body, mine: a.operatorId === me.id, createdAt: a.createdAt,
               };
             }),
+        };
+      },
+
+      async burnIntel(fileId) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.clearanceIndex > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        }
+        if (file.operatorId === me.id) return { ok: false, code: 'OWN_FILE' };
+        if (file.verifications.includes(me.id)) return { ok: false, code: 'CONFLICTED' };
+        file.burnerIds = file.burnerIds || [];
+        if (file.burnerIds.includes(me.id)) return { ok: false, code: 'ALREADY_BURNED' };
+        file.burnerIds.push(me.id);
+        if (file.burnerIds.length >= VERIFY_THRESHOLD && !file.isBurned) {
+          file.isBurned = true;
+          const author = Object.values(db.operators).find((r) => r.id === file.operatorId);
+          if (file.isVerified) {
+            file.isVerified = false;
+            if (author) author.verifiedCount = Math.max(0, (author.verifiedCount || 0) - 1);
+          }
+          if (author) {
+            db.dispatches = db.dispatches || [];
+            db.dispatches.push({
+              operatorId: author.id, kind: 'BURN_NOTICE',
+              payload: { title: file.title, class: file.class },
+              createdAt: Date.now(), seen: false,
+            });
+          }
+        }
+        saveDB(db);
+        return { ok: true, burns: file.burnerIds.length, isBurned: file.isBurned || false };
+      },
+
+      async getOperatorFile(callsign) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const subject = db.operators[String(callsign).trim().toLowerCase()];
+        if (!subject) return { ok: false, code: 'NOT_ON_FILE' };
+        const files = (db.files || [])
+          .filter((f) => f.operatorId === subject.id)
+          .sort((a, b) => b.createdAt - a.createdAt)
+          .slice(0, 50)
+          .map((f) => mockFileRow(db, f, me));
+        return {
+          ok: true,
+          profile: {
+            callsign: subject.callsign,
+            clearanceIndex: subject.clearanceIndex || 0,
+            verifiedCount: subject.verifiedCount || 0,
+            contributions: subject.contributions || {},
+            enlistedAt: subject.enlistedAt,
+            lastContact: subject.enlistedAt,
+            drops: (db.files || []).filter((f) => f.operatorId === subject.id).length,
+            annexes: (db.annexes || []).filter((a) => a.operatorId === subject.id).length,
+            burnsReceived: (db.files || []).filter((f) => f.operatorId === subject.id && f.isBurned).length,
+            me: subject.id === me.id,
+          },
+          files,
         };
       },
 
@@ -640,6 +730,8 @@ const intelDB = (() => {
     annexIntel: (fileId, body) => backend.annexIntel(fileId, body),
     getAnnexes: (fileId) => backend.getAnnexes(fileId),
     getRoster: () => backend.getRoster(),
+    getOperatorFile: (callsign) => backend.getOperatorFile(callsign),
+    burnIntel: (fileId) => backend.burnIntel(fileId),
     getDispatches: () => backend.getDispatches(),
     issueCompartmentKey: () => backend.issueCompartmentKey(),
     redeemCompartmentKey: (code) => backend.redeemCompartmentKey(code),

@@ -7,7 +7,7 @@
   <title>DEAD DROP // ACCESS TERMINAL</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Cpath d='M24 7 L42 39 H6 Z' fill='none' stroke='%234ade80' stroke-width='3'/%3E%3C/svg%3E">
   <!-- ?v= is bumped on every deploy so phones never mix new HTML with stale cached scripts -->
-  <link rel="stylesheet" href="css/style.css?v=6">
+  <link rel="stylesheet" href="css/style.css?v=7">
 </head>
 <body>
 
@@ -280,10 +280,46 @@
     </article>
   </section>
 
-  <script src="js/seed.js?v=6"></script>
-  <script src="js/config.js?v=6"></script>
-  <script src="js/inteldb.js?v=6"></script>
-  <script src="js/fx.js?v=6"></script>
-  <script src="js/app.js?v=6"></script>
+  <!-- ============ OPERATOR FILE (profile) ============ -->
+  <section id="profile" class="dossier hidden">
+    <header class="dossier-topbar decrypt">
+      <div class="topbar-left">
+        <span class="topbar-sig">DEAD DROP</span>
+        <span class="topbar-path">// OPERATOR FILE</span>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-file" id="p-fileno">FILE ██-███</span>
+        <button id="btn-profile-back" class="btn-ghost btn-small btn-accent" type="button">RETURN</button>
+      </div>
+    </header>
+
+    <article class="panel id-panel decrypt" id="p-identity">
+      <div class="stamp stamp-corner">PERSONNEL</div>
+      <div class="id-insignia" id="p-insignia" aria-hidden="true"></div>
+      <div class="id-main">
+        <div class="id-label">OPERATOR CALLSIGN</div>
+        <h1 class="id-callsign" id="p-callsign">CALLSIGN</h1>
+        <div class="id-row">
+          <span class="id-opid" id="p-opid">OP-0000-00</span>
+          <span class="p-tier" id="p-tier">RESTRICTED</span>
+        </div>
+        <div class="id-row id-meta">
+          <span id="p-meta">ENLISTED --.--.---- // MARK: ----</span>
+        </div>
+        <div class="id-row p-statline" id="p-stats"></div>
+      </div>
+    </article>
+
+    <article class="panel ladder-panel decrypt">
+      <h2 class="panel-title">FIELD RECORD <span class="panel-title-aside" id="p-record-count"></span></h2>
+      <ul class="feed" id="p-files"></ul>
+    </article>
+  </section>
+
+  <script src="js/seed.js?v=7"></script>
+  <script src="js/config.js?v=7"></script>
+  <script src="js/inteldb.js?v=7"></script>
+  <script src="js/fx.js?v=7"></script>
+  <script src="js/app.js?v=7"></script>
 </body>
 </html>

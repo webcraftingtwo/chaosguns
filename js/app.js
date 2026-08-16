@@ -66,6 +66,9 @@
     ALREADY_VERIFIED: 'ALREADY CONFIRMED BY YOU',
     BAD_ANNEX: 'FIELD NOTES RUN 2–500 CHARACTERS',
     BAD_TAG: 'UNRECOGNIZED THEATER OR MODE TAG',
+    BURNED: 'DROP IS UNDER BURN NOTICE',
+    CONFLICTED: 'YOU CANNOT BOTH CONFIRM AND BURN A DROP',
+    ALREADY_BURNED: 'ALREADY BURNED BY YOU',
     INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
     NOT_ON_FILE: 'FILE NOT ON RECORD',
     KEY_REJECTED: 'KEY REJECTED — INVALID OR ALREADY BURNED',
@@ -263,6 +266,9 @@
     }
     if (d.kind === 'ANNEX_ADDED') {
       return `▮ FIELD NOTE APPENDED — ${d.payload.author} ANNEXED "${d.payload.title}"`;
+    }
+    if (d.kind === 'BURN_NOTICE') {
+      return `▮ BURN NOTICE — "${d.payload.title}" DISPUTED AND STRUCK BY THE NETWORK`;
     }
     return '▮ DISPATCH RECEIVED';
   }
@@ -822,10 +828,12 @@
     }
   }
 
-  /* All user-authored strings go in via textContent — never innerHTML. */
-  function dropRow(f) {
+  /* All user-authored strings go in via textContent — never innerHTML.
+     `rerender` is called after a state-changing action (confirm/burn) so
+     the same row renderer serves the feed and operator files. */
+  function dropRow(f, rerender = refreshFeed) {
     const li = document.createElement('li');
-    li.className = 'drop' + (f.mine ? ' mine' : '');
+    li.className = 'drop' + (f.mine ? ' mine' : '') + (f.isBurned ? ' burned' : '');
 
     const head = document.createElement('div');
     head.className = 'drop-head';
@@ -833,12 +841,18 @@
       span('drop-class', f.class),
       span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
     );
+    if (f.isBurned) head.append(span('burn-stamp', 'BURN NOTICE'));
     if (f.map) head.append(span('drop-tag', f.map));
     if (f.mode) head.append(span('drop-tag', f.mode));
     const author = span('drop-author', '');
     author.append('BY ');
     const b = document.createElement('b');
     b.textContent = f.mine ? 'YOU' : f.author.toUpperCase();
+    if (!f.mine) {
+      b.classList.add('link');
+      b.title = 'OPEN OPERATOR FILE';
+      b.addEventListener('click', () => openProfile(f.author, currentView()));
+    }
     author.appendChild(b);
     head.append(author, span('drop-date', fmtDropDate(f.createdAt)));
 
@@ -852,18 +866,28 @@
 
     const foot = document.createElement('div');
     foot.className = 'drop-foot';
-    const verif = span(
-      'drop-verif' + (f.isVerified ? ' confirmed' : ''),
-      f.isVerified
-        ? `▮ VERIFIED — ${f.verifications} CONFIRMATION${f.verifications === 1 ? '' : 'S'}`
-        : `VERIFICATION ${f.verifications} / ${intelDB.VERIFY_THRESHOLD}`
-    );
+    const verif = f.isBurned
+      ? span('drop-verif struck',
+          `✕ BURN NOTICE — STRUCK BY THE NETWORK (${f.burns} BURN${f.burns === 1 ? '' : 'S'})`)
+      : span(
+          'drop-verif' + (f.isVerified ? ' confirmed' : ''),
+          f.isVerified
+            ? `▮ VERIFIED — ${f.verifications} CONFIRMATION${f.verifications === 1 ? '' : 'S'}`
+            : `VERIFICATION ${f.verifications} / ${intelDB.VERIFY_THRESHOLD}`
+        );
     foot.appendChild(verif);
+    if (!f.isBurned && f.burns > 0) {
+      foot.appendChild(span('drop-burns', `BURNS ${f.burns} / ${intelDB.VERIFY_THRESHOLD}`));
+    }
 
     if (f.mine) {
       foot.appendChild(span('drop-flag', 'YOUR DROP'));
+    } else if (f.isBurned) {
+      if (f.burnedByMe) foot.appendChild(span('drop-flag', 'BURNED BY YOU'));
     } else if (f.verifiedByMe) {
       foot.appendChild(span('drop-flag', 'CONFIRMED BY YOU'));
+    } else if (f.burnedByMe) {
+      foot.appendChild(span('drop-flag', 'BURNED BY YOU'));
     } else {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -877,9 +901,33 @@
           btn.textContent = MESSAGES[r.code] || 'RELAY ERROR';
           return;
         }
-        await refreshFeed();
+        await rerender();
       });
       foot.appendChild(btn);
+
+      // burning takes a second tap — a burn is an accusation
+      const burn = document.createElement('button');
+      burn.type = 'button';
+      burn.className = 'burn-btn';
+      burn.textContent = 'BURN';
+      let armed = false;
+      burn.addEventListener('click', async () => {
+        if (!armed) {
+          armed = true;
+          burn.textContent = 'CONFIRM BURN?';
+          setTimeout(() => { armed = false; burn.textContent = 'BURN'; }, 3500);
+          return;
+        }
+        burn.disabled = true;
+        const r = await intelDB.burnIntel(f.id);
+        if (!r.ok && r.code !== 'ALREADY_BURNED') {
+          burn.disabled = false;
+          burn.textContent = MESSAGES[r.code] || 'RELAY ERROR';
+          return;
+        }
+        await rerender();
+      });
+      foot.appendChild(burn);
     }
 
     /* annex thread toggle */
@@ -1011,6 +1059,104 @@
   }
 
   /* ============================================================
+     OPERATOR FILE (profile)
+     ============================================================ */
+
+  const profileEl = $('#profile');
+  let profileReturn = 'dossier';
+
+  function currentView() {
+    if (!archiveEl.classList.contains('hidden')) return 'archive';
+    if (!rosterEl.classList.contains('hidden')) return 'roster';
+    if (!profileEl.classList.contains('hidden')) return profileReturn; // burrow no deeper
+    return 'dossier';
+  }
+
+  async function openProfile(callsign, returnTo = 'dossier', soft = false) {
+    profileReturn = returnTo;
+    el.dossier.classList.add('hidden');
+    archiveEl.classList.add('hidden');
+    rosterEl.classList.add('hidden');
+    profileEl.classList.remove('hidden');
+    if (!soft) window.scrollTo(0, 0);
+
+    const res = await intelDB.getOperatorFile(callsign);
+    if (!res.ok) {
+      $('#p-callsign').textContent = 'NOT ON FILE';
+      $('#p-files').innerHTML = '';
+      return;
+    }
+    const p = res.profile;
+    const seed = await deriveSeed(p.callsign);
+    const hue = `hsl(${seed.hue} 72% 60%)`;
+
+    $('#p-fileno').textContent = `FILE ${seed.operatorId.slice(3)}`;
+    const insignia = $('#p-insignia');
+    insignia.innerHTML = seed.insignia.svg; // trusted: our own SVG set
+    insignia.style.color = hue;
+    const nameEl = $('#p-callsign');
+    nameEl.textContent = p.callsign.toUpperCase() + (p.me ? ' ◂ YOU' : '');
+    nameEl.style.color = hue;
+    const opid = $('#p-opid');
+    opid.textContent = seed.operatorId;
+    opid.style.color = hue;
+    const tierEl = $('#p-tier');
+    tierEl.textContent = `${intelDB.TIERS[p.clearanceIndex]} // ${rosterSpec(p.contributions)}`;
+    tierEl.style.color = hue;
+
+    const enlisted = new Date(p.enlistedAt)
+      .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      .toUpperCase();
+    const contact = fmtLastContact(p.lastContact);
+    $('#p-meta').textContent =
+      `ENLISTED ${enlisted} // MARK: ${seed.insignia.name} // ${contact.text}`;
+
+    const stats = $('#p-stats');
+    stats.innerHTML = '';
+    stats.append(span('', `${p.drops} DROP${p.drops === 1 ? '' : 'S'} // ${p.verifiedCount} VERIFIED // ${p.annexes} FIELD NOTE${p.annexes === 1 ? '' : 'S'}`));
+    if (p.burnsReceived > 0) {
+      stats.append(span('p-burns', ` // ${p.burnsReceived} UNDER BURN NOTICE`));
+    }
+
+    $('#p-record-count').textContent =
+      `${res.files.length} FILE${res.files.length === 1 ? '' : 'S'} // GATED AT YOUR CLEARANCE`;
+
+    const list = $('#p-files');
+    list.innerHTML = '';
+    if (res.files.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = 'NO DROPS ON RECORD FOR THIS OPERATOR.';
+      list.appendChild(li);
+    } else {
+      const rerender = () => openProfile(callsign, returnTo, true);
+      for (const f of res.files) {
+        list.appendChild(f.locked ? lockedDropRow(f) : dropRow(f, rerender));
+      }
+    }
+
+    if (!soft) {
+      const blocks = profileEl.querySelectorAll('.decrypt');
+      blocks.forEach((bl) => bl.classList.remove('decrypted'));
+      FX.staggerIn(blocks, 110);
+    } else {
+      profileEl.querySelectorAll('.decrypt').forEach((bl) => bl.classList.add('decrypted'));
+    }
+  }
+
+  async function closeProfile() {
+    profileEl.classList.add('hidden');
+    if (profileReturn === 'archive') {
+      archiveEl.classList.remove('hidden');
+      await refreshFeed(); // pick up any confirms/burns made from the profile
+    } else if (profileReturn === 'roster') {
+      await openRoster();
+    } else {
+      el.dossier.classList.remove('hidden');
+    }
+  }
+
+  /* ============================================================
      OPERATOR ROSTER
      ============================================================ */
 
@@ -1062,7 +1208,9 @@
     res.roster.forEach((op, i) => {
       const seed = seeds[i];
       const li = document.createElement('li');
-      li.className = 'roster-row' + (op.me ? ' me' : '');
+      li.className = 'roster-row link' + (op.me ? ' me' : '');
+      li.title = 'OPEN OPERATOR FILE';
+      li.addEventListener('click', () => openProfile(op.callsign, 'roster'));
       const hue = `hsl(${seed.hue} 72% 60%)`;
 
       const insignia = document.createElement('span');
@@ -1115,6 +1263,7 @@
     el.dossier.classList.add('hidden');
     archiveEl.classList.add('hidden');
     rosterEl.classList.add('hidden');
+    profileEl.classList.add('hidden');
     el.gate.classList.remove('hidden');
     el.inPass.value = '';
     el.inConfirm.value = '';
@@ -1144,6 +1293,7 @@
   $('#f-map').addEventListener('change', renderFeed);
   $('#btn-roster').addEventListener('click', openRoster);
   $('#btn-roster-back').addEventListener('click', closeRoster);
+  $('#btn-profile-back').addEventListener('click', closeProfile);
 
   // ENTER anywhere in the gate submits (no <form>, no page reload).
   [el.inCallsign, el.inPass, el.inConfirm, el.inCipher].forEach((input) =>
