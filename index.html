@@ -99,6 +99,15 @@
     </div>
   </div>
 
+  <!-- ============ INCOMING DISPATCHES ============ -->
+  <div id="dispatch-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dispatch-title">
+    <div class="panel dispatch-panel">
+      <h2 id="dispatch-title" class="dispatch-title">INCOMING DISPATCHES // SINCE LAST CONTACT</h2>
+      <div id="dispatch-lines" class="dispatch-lines" aria-live="polite"></div>
+      <button id="dispatch-ack" class="btn-primary hidden" type="button">ACKNOWLEDGED</button>
+    </div>
+  </div>
+
   <!-- ============ OPERATOR DOSSIER ============ -->
   <section id="dossier" class="dossier hidden">
     <header class="dossier-topbar decrypt">
@@ -108,6 +117,7 @@
       </div>
       <div class="topbar-right">
         <span class="topbar-file" id="d-fileno">FILE ██-███</span>
+        <button id="btn-archive" class="btn-ghost btn-small btn-accent" type="button">INTEL ARCHIVE</button>
         <button id="btn-logout" class="btn-ghost btn-small" type="button">TERMINATE SESSION</button>
       </div>
     </header>
@@ -146,6 +156,7 @@
             CLEARANCE RISES WHEN YOUR FILED INTEL IS VERIFIED BY OTHER OPERATORS.
           </p>
         </div>
+        <div id="compartment-zone" class="compartment-zone"></div>
       </article>
 
       <!-- specialization -->
@@ -172,7 +183,54 @@
     </footer>
   </section>
 
+  <!-- ============ INTEL ARCHIVE ============ -->
+  <section id="archive" class="dossier hidden">
+    <header class="dossier-topbar decrypt">
+      <div class="topbar-left">
+        <span class="topbar-sig">DEAD DROP</span>
+        <span class="topbar-path">// INTEL ARCHIVE</span>
+      </div>
+      <div class="topbar-right">
+        <span class="topbar-file" id="a-clearance">CLEARANCE: RESTRICTED</span>
+        <button id="btn-to-dossier" class="btn-ghost btn-small btn-accent" type="button">RETURN TO DOSSIER</button>
+      </div>
+    </header>
+
+    <div class="archive-grid">
+
+      <!-- composer -->
+      <article class="panel compose-panel decrypt">
+        <h2 class="panel-title">FILE NEW INTEL</h2>
+        <div class="compose-classes" id="c-classes" role="group" aria-label="intel class"></div>
+        <label class="field">
+          <span class="field-label">SUBJECT</span>
+          <input id="c-title" type="text" autocomplete="off" spellcheck="false"
+                 maxlength="80" placeholder="e.g. LAYALI GROVE — NORTH WALL BREACH TIMING">
+        </label>
+        <label class="field">
+          <span class="field-label">FIELD REPORT</span>
+          <textarea id="c-body" maxlength="2000" rows="7" spellcheck="false"
+                    placeholder="What you know. Where it works. When it stops working."></textarea>
+        </label>
+        <p id="c-msg" class="gate-msg" aria-live="polite"></p>
+        <button id="c-submit" class="btn-primary" type="button">TRANSMIT</button>
+        <p class="compose-note">
+          DROPS TRANSMIT AT YOUR CURRENT CLEARANCE. CONFIRMATION BY 2 OPERATORS
+          MARKS INTEL VERIFIED AND ADVANCES YOUR STANDING.
+        </p>
+      </article>
+
+      <!-- network feed -->
+      <article class="panel feed-panel decrypt">
+        <h2 class="panel-title">NETWORK DROPS <span class="panel-title-aside" id="feed-count"></span></h2>
+        <ul class="feed" id="feed"></ul>
+      </article>
+
+    </div>
+  </section>
+
   <script src="js/seed.js"></script>
+  <script src="js/config.js"></script>
   <script src="js/inteldb.js"></script>
   <script src="js/fx.js"></script>
   <script src="js/app.js"></script>

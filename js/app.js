@@ -39,6 +39,11 @@
   /* gate mode: 'auth' | 'enlist' | 'recover' */
   let mode = 'auth';
 
+  /* current operator state, kept fresh across views */
+  let currentDossier = null;
+  let currentSeed = null;
+  let pickedClass = null;
+
   const MESSAGES = {
     CALLSIGN_IN_SERVICE: 'CALLSIGN ALREADY IN SERVICE — CHOOSE ANOTHER',
     CALLSIGN_NOT_ON_FILE: 'CALLSIGN NOT ON FILE — CHECK SPELLING OR ENLIST',
@@ -48,6 +53,19 @@
     BAD_PASS: 'PASSPHRASE MUST BE AT LEAST 6 CHARACTERS',
     PASS_MISMATCH: 'PASSPHRASE CONFIRMATION DOES NOT MATCH',
     BAD_CIPHER: 'ENTER THE FULL EXTRACTION CIPHER (DD-XXXX-XXXX-XXXX)',
+    RELAY_DOWN: 'RELAY UNREACHABLE — CHECK CONNECTION AND RETRY',
+    SESSION_INVALID: 'SESSION EXPIRED — RE-AUTHENTICATE',
+    BAD_CLASS: 'SELECT A CLASS FOR THIS DROP',
+    BAD_TITLE: 'SUBJECT MUST BE 4–80 CHARACTERS',
+    BAD_BODY: 'REPORT MUST BE 20–2000 CHARACTERS',
+    OWN_FILE: 'YOU CANNOT CONFIRM YOUR OWN DROP',
+    ALREADY_VERIFIED: 'ALREADY CONFIRMED BY YOU',
+    INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
+    NOT_ON_FILE: 'FILE NOT ON RECORD',
+    KEY_REJECTED: 'KEY REJECTED — INVALID OR ALREADY BURNED',
+    KEY_LIMIT: 'KEY LIMIT REACHED — 3 UNREDEEMED KEYS MAXIMUM',
+    INSUFFICIENT_STANDING: 'TOP SECRET STANDING REQUIRED TO REDEEM',
+    ALREADY_COMPARTMENTED: 'YOU ARE ALREADY INSIDE THE COMPARTMENT',
   };
 
   const CLASS_DESCRIPTIONS = {
@@ -221,10 +239,48 @@
     await FX.wait(FX.reducedMotion ? 400 : 1150);
     el.flash.classList.add('hidden');
 
+    // Anything that happened while the operator was away lands first.
+    const disp = await intelDB.getDispatches();
+    if (disp.ok && disp.dispatches?.length) {
+      await showDispatches(disp.dispatches);
+    }
+
     await renderDossier(dossier, seed);
   }
 
+  function dispatchLine(d) {
+    if (d.kind === 'INTEL_VERIFIED') {
+      return `▮ DROP CONFIRMED — "${d.payload.title}" VERIFIED BY THE NETWORK`;
+    }
+    if (d.kind === 'CLEARANCE_GRANTED') {
+      return `▮ CLEARANCE REVIEW PASSED — ${intelDB.TIERS[d.payload.clearanceIndex]} GRANTED`;
+    }
+    return '▮ DISPATCH RECEIVED';
+  }
+
+  function showDispatches(dispatches) {
+    const modal = $('#dispatch-modal');
+    const lines = $('#dispatch-lines');
+    const ack = $('#dispatch-ack');
+    lines.innerHTML = '';
+    ack.classList.add('hidden');
+    modal.classList.remove('hidden');
+    return new Promise(async (resolve) => {
+      // typeSequence uses textContent — operator-authored titles are safe
+      await FX.typeSequence(lines, dispatches.map(dispatchLine), { now: false }, {
+        charDelay: 8, lineDelay: 260,
+      });
+      ack.classList.remove('hidden');
+      ack.onclick = () => {
+        modal.classList.add('hidden');
+        resolve();
+      };
+    });
+  }
+
   async function renderDossier(dossier, seed) {
+    currentDossier = dossier;
+    currentSeed = seed;
     /* --- identity --- */
     $('#d-insignia').innerHTML = seed.insignia.svg;
     $('#d-insignia-name').textContent = `MARK: ${seed.insignia.name}`;
@@ -236,17 +292,30 @@
     /* --- clearance --- */
     $('#d-clearance').textContent = dossier.clearance;
     const need = dossier.nextRequirement;
-    if (need !== null) {
+    const fill = $('#d-progress-fill');
+    if (dossier.clearanceIndex === 4) {
+      $('#d-progress-label').textContent = 'CEILING REACHED';
+      $('#d-progress-count').textContent = '—';
+      fill.style.width = '100%';
+      $('#d-progress-note').textContent =
+        'YOU ARE INSIDE THE COMPARTMENT. YOU MAY ISSUE KEYS TO OPERATORS AT TOP SECRET.';
+    } else if (dossier.nextTier === 'COMPARTMENTED') {
+      // the last door does not open by count
+      $('#d-progress-label').textContent = 'COMPARTMENTED — BY INVITATION ONLY';
+      $('#d-progress-count').textContent = '■';
+      fill.style.width = '0%';
+      $('#d-progress-note').textContent =
+        'THE LAST DOOR DOES NOT OPEN FROM YOUR SIDE. A COMPARTMENT KEY MUST FIND YOU.';
+    } else {
       $('#d-progress-label').textContent = `NEXT REVIEW: ${dossier.nextTier}`;
       $('#d-progress-count').textContent = `${dossier.verifiedCount} / ${need}`;
+      fill.style.width = `${Math.min(100, (dossier.verifiedCount / need) * 100)}%`;
       $('#d-progress-note').textContent =
         dossier.verifiedCount === 0
           ? `CLEARANCE RISES WHEN YOUR FILED INTEL IS VERIFIED BY OTHER OPERATORS. ${need} VERIFIED FILES OPEN ${dossier.nextTier} REVIEW.`
           : `${need - dossier.verifiedCount} MORE VERIFIED FILES OPEN ${dossier.nextTier} REVIEW.`;
-    } else {
-      $('#d-progress-label').textContent = 'CEILING REACHED';
-      $('#d-progress-count').textContent = '—';
     }
+    renderCompartmentZone(dossier);
 
     /* --- specialization --- */
     const specEl = $('#d-spec');
@@ -286,8 +355,17 @@
       li.innerHTML = `
         <span class="cls-name">${cls}</span>
         <span class="cls-desc">${CLASS_DESCRIPTIONS[cls]}</span>
-        <span class="cls-count">${count === 0 ? 'NO FILES' : `${count} FILES`}</span>`;
+        <span class="cls-count">${count === 0 ? 'NO FILES' : `${count} FILE${count === 1 ? '' : 'S'}`}</span>`;
       classesEl.appendChild(li);
+    }
+
+    /* --- relay status footer --- */
+    if (intelDB.live) {
+      $('.dossier-foot span').innerHTML =
+        'RELAY LINK: <b>ESTABLISHED</b> — INTEL ARCHIVE ONLINE';
+    } else {
+      $('.dossier-foot span').innerHTML =
+        'OFFLINE MODE — <b>LOCAL ARCHIVE ONLY</b>, NOTHING LEAVES THIS DEVICE';
     }
 
     /* --- clearance ladder + teasers --- */
@@ -333,6 +411,88 @@
   }
 
   /**
+   * COMPARTMENT ZONE — the clearance panel's invitation mechanics.
+   * TOP SECRET operators get the key-redemption slot; COMPARTMENTED
+   * operators get the key-issuing console.
+   */
+  function renderCompartmentZone(dossier) {
+    const zone = $('#compartment-zone');
+    zone.innerHTML = '';
+    if (dossier.clearanceIndex === 3) {
+      zone.innerHTML = `
+        <div class="ck-row">
+          <input id="ck-input" type="text" autocomplete="off" spellcheck="false"
+                 maxlength="14" placeholder="CK-XXXX-XXXX" aria-label="compartment key">
+          <button id="ck-redeem" class="ck-btn" type="button">REDEEM KEY</button>
+        </div>
+        <p id="ck-msg" class="ck-msg" aria-live="polite"></p>`;
+      $('#ck-redeem').addEventListener('click', onRedeemKey);
+      $('#ck-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') onRedeemKey();
+      });
+    } else if (dossier.clearanceIndex === 4) {
+      zone.innerHTML = `
+        <button id="ck-issue" class="ck-btn" type="button">ISSUE COMPARTMENT KEY</button>
+        <div id="ck-out" class="ck-code hidden"></div>
+        <p id="ck-msg" class="ck-msg" aria-live="polite"></p>
+        <p class="ck-note">SINGLE USE. HAND IT TO ONE OPERATOR AT TOP SECRET — OFF-NETWORK.</p>`;
+      $('#ck-issue').addEventListener('click', onIssueKey);
+    }
+  }
+
+  async function onRedeemKey() {
+    const input = $('#ck-input');
+    const msg = $('#ck-msg');
+    const code = input.value.trim();
+    msg.classList.remove('ok');
+    if (!/^CK-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(code)) {
+      msg.textContent = '✕ ENTER THE FULL KEY (CK-XXXX-XXXX)';
+      return;
+    }
+    const btn = $('#ck-redeem');
+    btn.disabled = true;
+    try {
+      const res = await intelDB.redeemCompartmentKey(code);
+      if (!res.ok) {
+        msg.textContent = `✕ ${MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN'}`;
+        return;
+      }
+      // the last promotion gets the full ceremony
+      el.dossier.classList.add('hidden');
+      el.flashText.textContent = 'COMPARTMENTED';
+      el.flash.classList.remove('hidden');
+      await FX.wait(FX.reducedMotion ? 400 : 1150);
+      el.flash.classList.add('hidden');
+      el.dossier.classList.remove('hidden');
+      await renderDossier(res.dossier, currentSeed);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function onIssueKey() {
+    const btn = $('#ck-issue');
+    const out = $('#ck-out');
+    const msg = $('#ck-msg');
+    msg.classList.remove('ok');
+    msg.textContent = '';
+    btn.disabled = true;
+    try {
+      const res = await intelDB.issueCompartmentKey();
+      if (!res.ok) {
+        msg.textContent = `✕ ${MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN'}`;
+        return;
+      }
+      out.textContent = res.key;
+      out.classList.remove('hidden');
+      msg.classList.add('ok');
+      msg.textContent = 'KEY ISSUED — SHOWN HERE ONCE';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /**
    * Teaser copy → HTML. `[[...]]` segments become physical black-bar
    * redactions; the text under the bar is only block characters, so
    * nothing real is ever present to reveal.
@@ -352,14 +512,232 @@
   }
 
   /* ============================================================
+     INTEL ARCHIVE — filing, feed, verification
+     ============================================================ */
+
+  const archiveEl = $('#archive');
+
+  function fmtDropDate(ms) {
+    return new Date(ms)
+      .toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })
+      .toUpperCase();
+  }
+
+  async function openArchive() {
+    el.dossier.classList.add('hidden');
+    archiveEl.classList.remove('hidden');
+    window.scrollTo(0, 0);
+    $('#a-clearance').textContent = `CLEARANCE: ${currentDossier.clearance}`;
+    buildClassPicker();
+
+    const blocks = archiveEl.querySelectorAll('.decrypt');
+    blocks.forEach((b) => b.classList.remove('decrypted'));
+    FX.staggerIn(blocks, 110);
+    await refreshFeed();
+  }
+
+  async function closeArchive() {
+    archiveEl.classList.add('hidden');
+    // Contributions / clearance may have moved while filing; re-render
+    // from the state the data layer last returned.
+    el.dossier.classList.remove('hidden');
+    await renderDossier(currentDossier, currentSeed);
+  }
+
+  function buildClassPicker() {
+    const wrap = $('#c-classes');
+    wrap.innerHTML = '';
+    for (const cls of intelDB.CLASSES) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'class-pick' + (pickedClass === cls ? ' picked' : '');
+      b.textContent = cls;
+      b.addEventListener('click', () => {
+        pickedClass = cls;
+        wrap.querySelectorAll('.class-pick').forEach((n) =>
+          n.classList.toggle('picked', n.textContent === cls)
+        );
+      });
+      wrap.appendChild(b);
+    }
+  }
+
+  function composeMsg(text, ok = false) {
+    const m = $('#c-msg');
+    m.classList.toggle('ok', ok);
+    m.textContent = text ? (ok ? text : `✕ ${text}`) : '';
+  }
+
+  async function onTransmit() {
+    const title = $('#c-title').value.trim();
+    const body = $('#c-body').value.trim();
+    if (!pickedClass) return composeMsg(MESSAGES.BAD_CLASS);
+    if (title.length < 4 || title.length > 80) return composeMsg(MESSAGES.BAD_TITLE);
+    if (body.length < 20 || body.length > 2000) return composeMsg(MESSAGES.BAD_BODY);
+
+    const btn = $('#c-submit');
+    btn.disabled = true;
+    composeMsg('… TRANSMITTING TO RELAY', true);
+    try {
+      const res = await intelDB.fileIntel(pickedClass, title, body);
+      if (!res.ok) return composeMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
+      currentDossier = res.dossier;
+      $('#c-title').value = '';
+      $('#c-body').value = '';
+      composeMsg(
+        `INTEL FILED — CLASSIFIED ${currentDossier.clearance} // AWAITING VERIFICATION`,
+        true
+      );
+      await refreshFeed();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function refreshFeed() {
+    const feedEl = $('#feed');
+    const res = await intelDB.getIntelFeed();
+    feedEl.innerHTML = '';
+    if (!res.ok) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent =
+        res.code === 'RELAY_DOWN'
+          ? 'RELAY UNREACHABLE — ARCHIVE TEMPORARILY DARK'
+          : MESSAGES[res.code] || 'ARCHIVE ERROR';
+      feedEl.appendChild(li);
+      return;
+    }
+
+    const files = res.files || [];
+    const withheld = files.filter((f) => f.locked).length;
+    $('#feed-count').textContent =
+      `${files.length} ON FILE // ${withheld} WITHHELD`;
+
+    if (files.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = 'NO DROPS ON FILE AT ANY CLEARANCE. FILE THE FIRST.';
+      feedEl.appendChild(li);
+      return;
+    }
+
+    for (const f of files) {
+      feedEl.appendChild(f.locked ? lockedDropRow(f) : dropRow(f));
+    }
+  }
+
+  /* All user-authored strings go in via textContent — never innerHTML. */
+  function dropRow(f) {
+    const li = document.createElement('li');
+    li.className = 'drop' + (f.mine ? ' mine' : '');
+
+    const head = document.createElement('div');
+    head.className = 'drop-head';
+    head.append(
+      span('drop-class', f.class),
+      span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
+    );
+    const author = span('drop-author', '');
+    author.append('BY ');
+    const b = document.createElement('b');
+    b.textContent = f.mine ? 'YOU' : f.author.toUpperCase();
+    author.appendChild(b);
+    head.append(author, span('drop-date', fmtDropDate(f.createdAt)));
+
+    const title = document.createElement('div');
+    title.className = 'drop-title';
+    title.textContent = f.title;
+
+    const body = document.createElement('div');
+    body.className = 'drop-body';
+    body.textContent = f.body;
+
+    const foot = document.createElement('div');
+    foot.className = 'drop-foot';
+    const verif = span(
+      'drop-verif' + (f.isVerified ? ' confirmed' : ''),
+      f.isVerified
+        ? `▮ VERIFIED — ${f.verifications} CONFIRMATION${f.verifications === 1 ? '' : 'S'}`
+        : `VERIFICATION ${f.verifications} / ${intelDB.VERIFY_THRESHOLD}`
+    );
+    foot.appendChild(verif);
+
+    if (f.mine) {
+      foot.appendChild(span('drop-flag', 'YOUR DROP'));
+    } else if (f.verifiedByMe) {
+      foot.appendChild(span('drop-flag', 'CONFIRMED BY YOU'));
+    } else {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'verify-btn';
+      btn.textContent = 'CONFIRM INTEL';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const r = await intelDB.verifyIntel(f.id);
+        if (!r.ok && r.code !== 'ALREADY_VERIFIED') {
+          btn.disabled = false;
+          btn.textContent = MESSAGES[r.code] || 'RELAY ERROR';
+          return;
+        }
+        await refreshFeed();
+      });
+      foot.appendChild(btn);
+    }
+
+    li.append(head, title, body, foot);
+    return li;
+  }
+
+  function lockedDropRow(f) {
+    const li = document.createElement('li');
+    li.className = 'drop locked';
+
+    const head = document.createElement('div');
+    head.className = 'drop-head';
+    head.append(
+      span('drop-class', f.class),
+      span('drop-tier', intelDB.TIERS[f.clearanceIndex]),
+      span('drop-author', 'AUTHOR WITHHELD'),
+      span('drop-date', fmtDropDate(f.createdAt)),
+    );
+
+    const title = document.createElement('div');
+    title.className = 'drop-title';
+    const bar = document.createElement('span');
+    bar.className = 'redact';
+    bar.title = 'REDACTED — INSUFFICIENT CLEARANCE';
+    bar.textContent = '█'.repeat(22);
+    title.appendChild(bar);
+
+    const body = document.createElement('div');
+    body.className = 'drop-body';
+    body.textContent =
+      `PAYLOAD WITHHELD — ${intelDB.TIERS[f.clearanceIndex]} CLEARANCE REQUIRED.`;
+
+    li.append(head, title, body);
+    return li;
+  }
+
+  function span(cls, text) {
+    const s = document.createElement('span');
+    s.className = cls;
+    s.textContent = text;
+    return s;
+  }
+
+  /* ============================================================
      SESSION / LOGOUT
      ============================================================ */
 
   function terminateSession() {
     intelDB.clearSession();
+    currentDossier = null;
+    currentSeed = null;
     // Back to a neutral terminal: reset accent, show the gate.
     document.documentElement.style.removeProperty('--accent-h');
     el.dossier.classList.add('hidden');
+    archiveEl.classList.add('hidden');
     el.gate.classList.remove('hidden');
     el.inPass.value = '';
     el.inConfirm.value = '';
@@ -380,6 +758,9 @@
   );
   el.gateSubmit.addEventListener('click', onSubmit);
   el.logout.addEventListener('click', terminateSession);
+  $('#btn-archive').addEventListener('click', openArchive);
+  $('#btn-to-dossier').addEventListener('click', closeArchive);
+  $('#c-submit').addEventListener('click', onTransmit);
 
   // ENTER anywhere in the gate submits (no <form>, no page reload).
   [el.inCallsign, el.inPass, el.inConfirm, el.inCipher].forEach((input) =>
