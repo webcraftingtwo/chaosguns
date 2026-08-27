@@ -181,6 +181,32 @@ const intelDB = (() => {
         return rpc('get_roster', { p_token: session.token });
       },
 
+      async getActivity(limit = 24) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_activity', { p_token: session.token, p_limit: limit });
+      },
+
+      async getTasking() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('get_tasking', { p_token: session.token });
+      },
+
+      async appealBurn(fileId, statement) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('appeal_burn', {
+          p_token: session.token, p_file_id: fileId, p_statement: statement,
+        });
+      },
+
+      async reinstateIntel(fileId) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('reinstate_intel', { p_token: session.token, p_file_id: fileId });
+      },
+
       async getOperatorFile(callsign) {
         const session = getSession();
         if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
@@ -317,6 +343,10 @@ const intelDB = (() => {
         isBurned: f.isBurned || false,
         burns: burnerIds.length,
         burnedByMe: burnerIds.includes(viewer.id),
+        appeal: f.appeal || null,
+        appealAt: f.appealAt || null,
+        reinstates: (f.reinstateIds || []).length,
+        reinstatedByMe: (f.reinstateIds || []).includes(viewer.id),
       };
     }
 
@@ -618,6 +648,185 @@ const intelDB = (() => {
         };
       },
 
+      async appealBurn(fileId, statement) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.operatorId !== me.id) return { ok: false, code: 'NOT_YOUR_DROP' };
+        if (!file.isBurned) return { ok: false, code: 'NOT_BURNED' };
+        if (file.appealAt) return { ok: false, code: 'ALREADY_APPEALED' };
+        const text = statement.trim();
+        if (text.length < 10 || text.length > 500) return { ok: false, code: 'BAD_APPEAL' };
+        file.appeal = text;
+        file.appealAt = Date.now();
+        db.dispatches = db.dispatches || [];
+        for (const burnerId of file.burnerIds || []) {
+          db.dispatches.push({
+            operatorId: burnerId, kind: 'APPEAL_FILED',
+            payload: { title: file.title, author: me.callsign },
+            createdAt: Date.now(), seen: false,
+          });
+        }
+        saveDB(db);
+        return { ok: true };
+      },
+
+      async reinstateIntel(fileId) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const file = (db.files || []).find((f) => f.id === fileId);
+        if (!file) return { ok: false, code: 'NOT_ON_FILE' };
+        if (file.clearanceIndex > (me.clearanceIndex || 0)) {
+          return { ok: false, code: 'INSUFFICIENT_CLEARANCE' };
+        }
+        if (file.operatorId === me.id) return { ok: false, code: 'OWN_FILE' };
+        if (!file.isBurned || !file.appealAt) return { ok: false, code: 'NO_APPEAL' };
+        file.reinstateIds = file.reinstateIds || [];
+        if (file.reinstateIds.includes(me.id)) {
+          return { ok: false, code: 'ALREADY_REINSTATED' };
+        }
+        file.reinstateIds.push(me.id);
+        const count = file.reinstateIds.length;
+        if (count >= VERIFY_THRESHOLD) {
+          file.isBurned = false;
+          file.burnerIds = [];
+          file.reinstateIds = [];
+          file.appealAt = null;
+          file.isVerified = file.verifications.length >= VERIFY_THRESHOLD;
+          const author = Object.values(db.operators).find((r) => r.id === file.operatorId);
+          if (author && file.isVerified) {
+            author.verifiedCount = (author.verifiedCount || 0) + 1;
+            while (
+              (author.clearanceIndex || 0) < 3 &&
+              author.verifiedCount >= TIER_REQUIREMENTS[(author.clearanceIndex || 0) + 1]
+            ) {
+              author.clearanceIndex = (author.clearanceIndex || 0) + 1;
+              author.promotedAt = Date.now();
+            }
+          }
+          db.dispatches = db.dispatches || [];
+          db.dispatches.push({
+            operatorId: file.operatorId, kind: 'BURN_LIFTED',
+            payload: { title: file.title }, createdAt: Date.now(), seen: false,
+          });
+        }
+        saveDB(db);
+        return { ok: true, reinstates: count, lifted: !file.isBurned };
+      },
+
+      async getActivity(limit = 24) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const byId = (id) => Object.values(db.operators).find((r) => r.id === id);
+        const events = [];
+        for (const f of db.files || []) {
+          const author = byId(f.operatorId);
+          events.push({
+            kind: 'FILED', at: f.createdAt, actor: author ? author.callsign : 'UNKNOWN',
+            title: f.title, clearanceIndex: f.clearanceIndex, class: f.class,
+          });
+        }
+        for (const o of Object.values(db.operators)) {
+          events.push({
+            kind: 'ENLISTED', at: o.enlistedAt, actor: o.callsign,
+            title: null, clearanceIndex: 0, class: null,
+          });
+          if (o.promotedAt) {
+            events.push({
+              kind: 'CLEARED', at: o.promotedAt, actor: o.callsign,
+              title: null, clearanceIndex: o.clearanceIndex || 0, class: null,
+            });
+          }
+        }
+        for (const a of db.annexes || []) {
+          const f = (db.files || []).find((x) => x.id === a.fileId);
+          const who = byId(a.operatorId);
+          if (!f) continue;
+          events.push({
+            kind: 'ANNEXED', at: a.createdAt, actor: who ? who.callsign : 'UNKNOWN',
+            title: f.title, clearanceIndex: f.clearanceIndex, class: f.class,
+          });
+        }
+        const mine = me.clearanceIndex || 0;
+        return {
+          ok: true,
+          events: events
+            .sort((a, b) => b.at - a.at)
+            .slice(0, limit)
+            .map((e) => ({
+              ...e,
+              withheld: e.title !== null && e.clearanceIndex > mine,
+              title: e.title !== null && e.clearanceIndex > mine ? null : e.title,
+              me: e.actor === me.callsign,
+            })),
+        };
+      },
+
+      async getTasking() {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const mine = me.clearanceIndex || 0;
+        const files = db.files || [];
+        const byId = (id) => Object.values(db.operators).find((r) => r.id === id);
+        const awaiting = files
+          .filter((f) => f.clearanceIndex <= mine && f.operatorId !== me.id &&
+            !f.isVerified && !f.isBurned &&
+            !f.verifications.includes(me.id) && !(f.burnerIds || []).includes(me.id))
+          .sort((a, b) => b.createdAt - a.createdAt).slice(0, 4)
+          .map((f) => ({
+            id: f.id, title: f.title, class: f.class,
+            author: (byId(f.operatorId) || {}).callsign || 'UNKNOWN',
+            verifications: f.verifications.length,
+          }));
+        const minePending = files
+          .filter((f) => f.operatorId === me.id && !f.isVerified && !f.isBurned)
+          .sort((a, b) => b.createdAt - a.createdAt).slice(0, 3)
+          .map((f) => ({ id: f.id, title: f.title, verifications: f.verifications.length }));
+        const appeals = files
+          .filter((f) => f.isBurned && f.appealAt && f.clearanceIndex <= mine &&
+            f.operatorId !== me.id && !(f.reinstateIds || []).includes(me.id))
+          .slice(0, 3)
+          .map((f) => ({
+            id: f.id, title: f.title,
+            author: (byId(f.operatorId) || {}).callsign || 'UNKNOWN',
+            reinstates: (f.reinstateIds || []).length,
+          }));
+        const burnedMine = files
+          .filter((f) => f.operatorId === me.id && f.isBurned && !f.appealAt)
+          .slice(0, 3)
+          .map((f) => ({ id: f.id, title: f.title }));
+        const contributions = me.contributions || {};
+        const topClass = CLASSES
+          .slice().sort((a, b) => (contributions[b] || 0) - (contributions[a] || 0))[0];
+        const hasTop = (contributions[topClass] || 0) > 0;
+        return {
+          ok: true,
+          clearanceIndex: mine,
+          verifiedCount: me.verifiedCount || 0,
+          nextRequirement: mine < 3 ? TIER_REQUIREMENTS[mine + 1] : null,
+          awaiting, mine: minePending, appeals, burnedMine,
+          topClass: hasTop ? topClass : null,
+          specReads: hasTop
+            ? files.filter((f) => f.clearanceIndex <= mine && f.operatorId !== me.id &&
+                !f.isBurned && f.class === topClass).length
+            : 0,
+          withheldCount: files.filter((f) => f.clearanceIndex > mine).length,
+        };
+      },
+
       async getRoster() {
         const db = loadDB();
         const meId = getSession()?.operatorId;
@@ -739,6 +948,10 @@ const intelDB = (() => {
     getRoster: () => backend.getRoster(),
     getOperatorFile: (callsign) => backend.getOperatorFile(callsign),
     burnIntel: (fileId) => backend.burnIntel(fileId),
+    appealBurn: (fileId, statement) => backend.appealBurn(fileId, statement),
+    reinstateIntel: (fileId) => backend.reinstateIntel(fileId),
+    getActivity: (limit) => backend.getActivity(limit),
+    getTasking: () => backend.getTasking(),
     getDispatches: () => backend.getDispatches(),
     issueCompartmentKey: () => backend.issueCompartmentKey(),
     redeemCompartmentKey: (code) => backend.redeemCompartmentKey(code),

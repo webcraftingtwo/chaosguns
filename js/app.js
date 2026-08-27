@@ -67,6 +67,12 @@
     BAD_ANNEX: 'FIELD NOTES RUN 2–500 CHARACTERS',
     BAD_TAG: 'UNRECOGNIZED THEATER OR MODE TAG',
     BURNED: 'DROP IS UNDER BURN NOTICE',
+    NOT_YOUR_DROP: 'ONLY THE AUTHOR MAY APPEAL',
+    NOT_BURNED: 'NOTHING TO APPEAL — DROP IS NOT BURNED',
+    ALREADY_APPEALED: 'AN APPEAL IS ALREADY ON FILE',
+    BAD_APPEAL: 'APPEAL MUST RUN 10–500 CHARACTERS',
+    NO_APPEAL: 'NO APPEAL ON FILE FOR THIS DROP',
+    ALREADY_REINSTATED: 'YOU HAVE ALREADY BACKED THIS APPEAL',
     CONFLICTED: 'YOU CANNOT BOTH CONFIRM AND BURN A DROP',
     ALREADY_BURNED: 'ALREADY BURNED BY YOU',
     INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
@@ -316,6 +322,12 @@
     if (d.kind === 'BURN_NOTICE') {
       return `▮ BURN NOTICE — "${d.payload.title}" DISPUTED AND STRUCK BY THE NETWORK`;
     }
+    if (d.kind === 'APPEAL_FILED') {
+      return `▮ APPEAL FILED — ${d.payload.author} DISPUTES YOUR BURN ON "${d.payload.title}"`;
+    }
+    if (d.kind === 'BURN_LIFTED') {
+      return `▮ BURN LIFTED — "${d.payload.title}" REINSTATED BY THE NETWORK`;
+    }
     return '▮ DISPATCH RECEIVED';
   }
 
@@ -451,6 +463,10 @@
       }
     }
 
+    /* --- tasking + ticker (independent; never block the reveal) --- */
+    renderTasking();
+    renderTicker();
+
     /* --- materialize --- */
     el.dossier.classList.remove('hidden');
     window.scrollTo(0, 0);
@@ -469,6 +485,176 @@
       FX.scramble(callsignEl, dossier.callsign.toUpperCase(), 700),
       FX.scramble(opidEl, seed.operatorId, 550),
     ]);
+  }
+
+  /* ============================================================
+     NETWORK ACTIVITY TICKER + STANDING TASKING
+     ============================================================ */
+
+  function fmtAgo(ms) {
+    const min = Math.floor((Date.now() - ms) / 60000);
+    if (min < 1) return 'JUST NOW';
+    if (min < 60) return `${min}M AGO`;
+    const hrs = Math.floor(min / 60);
+    if (hrs < 24) return `${hrs}H AGO`;
+    return `${Math.floor(hrs / 24)}D AGO`;
+  }
+
+  const TICKER_VERBS = {
+    FILED: 'FILED',
+    CONFIRMED: 'CONFIRMED',
+    BURNED: 'BURNED',
+    ANNEXED: 'ANNEXED',
+    ENLISTED: 'ENLISTED WITH THE NETWORK',
+    CLEARED: 'CLEARED TO',
+  };
+
+  function tickerRow(e) {
+    const li = document.createElement('li');
+    li.className = 'tick' + (e.me ? ' me' : '') + (e.kind === 'BURNED' ? ' burned' : '');
+    li.appendChild(span('tick-when', fmtAgo(e.at)));
+
+    const line = document.createElement('span');
+    line.append(span('tick-actor', e.me ? 'YOU' : e.actor.toUpperCase()), ' ');
+
+    if (e.kind === 'ENLISTED') {
+      line.append(span('tick-verb', TICKER_VERBS.ENLISTED));
+    } else if (e.kind === 'CLEARED') {
+      line.append(span('tick-verb', TICKER_VERBS.CLEARED), ' ',
+                  span('tick-title', intelDB.TIERS[e.clearanceIndex]));
+    } else {
+      line.append(span('tick-verb', TICKER_VERBS[e.kind] || 'MOVED'), ' ');
+      if (e.withheld) {
+        // the event is public, the subject is not
+        const bar = span('tick-withheld', '█'.repeat(14));
+        bar.title = 'REDACTED — INSUFFICIENT CLEARANCE';
+        line.append(bar, ' ', span('tick-verb', `(${intelDB.TIERS[e.clearanceIndex]})`));
+      } else {
+        line.append(span('tick-title', `"${e.title}"`));
+      }
+    }
+    li.appendChild(line);
+    return li;
+  }
+
+  async function renderTicker() {
+    const list = $('#d-ticker');
+    list.innerHTML = '';
+    const res = await intelDB.getActivity(24);
+    if (!res.ok || !res.events?.length) {
+      const li = document.createElement('li');
+      li.className = 'tasking-empty';
+      li.textContent = res.ok
+        ? 'THE WIRE IS QUIET. NOTHING HAS MOVED YET.'
+        : 'RELAY UNREACHABLE — WIRE DARK.';
+      list.appendChild(li);
+      return;
+    }
+    for (const e of res.events) list.appendChild(tickerRow(e));
+  }
+
+  function task(text, cls = '') {
+    const li = document.createElement('li');
+    li.className = `task ${cls}`.trim();
+    const body = document.createElement('span');
+    body.append(...text);
+    li.appendChild(body);
+    return li;
+  }
+
+  function strong(t) {
+    const b = document.createElement('b');
+    b.textContent = t;
+    return b;
+  }
+
+  async function renderTasking() {
+    const list = $('#d-tasking');
+    list.innerHTML = '';
+    const t = await intelDB.getTasking();
+    if (!t.ok) {
+      const li = document.createElement('li');
+      li.className = 'tasking-empty';
+      li.textContent = 'RELAY UNREACHABLE — NO TASKING AVAILABLE.';
+      list.appendChild(li);
+      return;
+    }
+
+    const items = [];
+
+    // your burned drops are the most urgent thing on your plate
+    for (const b of t.burnedMine || []) {
+      items.push(task([
+        strong('APPEAL A BURN — '),
+        document.createTextNode(`"${b.title}" was struck. State your case in the archive and the network can reinstate it.`),
+      ], 'urgent'));
+    }
+
+    if ((t.appeals || []).length) {
+      const a = t.appeals[0];
+      items.push(task([
+        strong(`${t.appeals.length} APPEAL${t.appeals.length === 1 ? '' : 'S'} AWAIT REVIEW — `),
+        document.createTextNode(`${a.author} disputes the burn on "${a.title}" (${a.reinstates}/${intelDB.VERIFY_THRESHOLD} backing). Read it and decide.`),
+      ], 'urgent'));
+    }
+
+    if ((t.awaiting || []).length) {
+      const a = t.awaiting[0];
+      items.push(task([
+        strong(`${t.awaiting.length} DROP${t.awaiting.length === 1 ? '' : 'S'} AWAIT CONFIRMATION — `),
+        document.createTextNode('start with '),
+        (() => { const s = span('task-ref', `"${a.title}"`); return s; })(),
+        document.createTextNode(` by ${a.author}. Confirmations are how other operators climb.`),
+      ]));
+    }
+
+    for (const m of (t.mine || []).slice(0, 2)) {
+      items.push(task([
+        strong('YOUR DROP IS SHORT — '),
+        document.createTextNode(`"${m.title}" sits at ${m.verifications}/${intelDB.VERIFY_THRESHOLD}. It needs other operators to walk it.`),
+      ], 'quiet'));
+    }
+
+    if (t.nextRequirement !== null && t.nextRequirement !== undefined) {
+      const left = Math.max(0, t.nextRequirement - t.verifiedCount);
+      items.push(task([
+        strong(`${left} VERIFIED FILE${left === 1 ? '' : 'S'} TO ${intelDB.TIERS[t.clearanceIndex + 1]} — `),
+        document.createTextNode('file intel worth confirming and the ladder moves.'),
+      ], 'quiet'));
+    } else if (t.clearanceIndex === 3) {
+      items.push(task([
+        strong('COMPARTMENTED IS BY INVITATION — '),
+        document.createTextNode('keep filing. A key has to find you.'),
+      ], 'quiet'));
+    }
+
+    if (t.withheldCount > 0) {
+      items.push(task([
+        strong(`${t.withheldCount} FILE${t.withheldCount === 1 ? '' : 'S'} SIT ABOVE YOUR CLEARANCE — `),
+        document.createTextNode('the archive shows you where they are, never what they say.'),
+      ], 'quiet'));
+    }
+
+    if (t.topClass) {
+      items.push(task([
+        strong(`${t.topClass} IS YOUR LANE — `),
+        document.createTextNode(`${t.specReads} ${t.topClass} file${t.specReads === 1 ? '' : 's'} on the network you did not write.`),
+      ], 'quiet'));
+    } else {
+      items.push(task([
+        strong('SPECIALIZATION PENDING — '),
+        document.createTextNode('file your first drop and the network starts deciding what you are.'),
+      ]));
+    }
+
+    if (!items.length) {
+      const li = document.createElement('li');
+      li.className = 'tasking-empty';
+      li.textContent = 'NOTHING OUTSTANDING. THE NETWORK IS SATISFIED — FOR NOW.';
+      list.appendChild(li);
+      return;
+    }
+    items.slice(0, 6).forEach((el2) => list.appendChild(el2));
   }
 
   /**
@@ -1352,6 +1538,79 @@
       foot.appendChild(burn);
     }
 
+    /* a burned drop can be disputed — by its author, then by the network */
+    let appealBox = null;
+    if (f.isBurned) {
+      appealBox = document.createElement('div');
+      appealBox.className = 'appeal-box';
+
+      if (f.appeal) {
+        appealBox.append(span('appeal-label', 'APPEAL ON FILE'), document.createTextNode(f.appeal));
+        if (f.appealAt) {
+          const backing = span('appeal-count',
+            `REINSTATEMENT ${f.reinstates} / ${intelDB.VERIFY_THRESHOLD}` +
+            (f.mine ? ' — THE NETWORK DECIDES' : ''));
+          appealBox.appendChild(backing);
+          if (!f.mine && !f.reinstatedByMe) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'reinstate-btn';
+            btn.textContent = 'BACK THE APPEAL';
+            btn.style.marginTop = '7px';
+            btn.addEventListener('click', async () => {
+              btn.disabled = true;
+              const r = await intelDB.reinstateIntel(f.id);
+              if (!r.ok && r.code !== 'ALREADY_REINSTATED') {
+                btn.disabled = false;
+                btn.textContent = MESSAGES[r.code] || 'RELAY ERROR';
+                return;
+              }
+              await rerender();
+            });
+            appealBox.appendChild(btn);
+          } else if (f.reinstatedByMe) {
+            appealBox.appendChild(span('appeal-count', 'YOU BACKED THIS APPEAL'));
+          }
+        }
+      } else if (f.mine) {
+        appealBox.append(span('appeal-label', 'APPEAL THIS BURN'));
+        const compose = document.createElement('div');
+        compose.className = 'appeal-compose';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.maxLength = 500;
+        input.placeholder = 'STATE YOUR CASE — WHY THIS INTEL STANDS';
+        input.setAttribute('aria-label', 'appeal statement');
+        const send = document.createElement('button');
+        send.type = 'button';
+        send.className = 'reinstate-btn';
+        send.textContent = 'FILE APPEAL';
+        const submit = async () => {
+          const text = input.value.trim();
+          if (text.length < 10) {
+            input.placeholder = MESSAGES.BAD_APPEAL;
+            return;
+          }
+          send.disabled = true;
+          const r = await intelDB.appealBurn(f.id, text);
+          if (!r.ok) {
+            send.disabled = false;
+            input.value = '';
+            input.placeholder = MESSAGES[r.code] || 'RELAY ERROR — TRY AGAIN';
+            return;
+          }
+          await rerender();
+        };
+        send.addEventListener('click', submit);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+        compose.append(input, send);
+        appealBox.appendChild(compose);
+      } else {
+        appealBox.append(span('appeal-label', 'STRUCK'),
+          document.createTextNode('THE AUTHOR HAS NOT APPEALED THIS BURN.'));
+      }
+    }
+
     /* annex thread toggle */
     const annexBtn = document.createElement('button');
     annexBtn.type = 'button';
@@ -1371,7 +1630,9 @@
       }
     });
 
-    li.append(head, title, body, foot, thread);
+    li.append(head, title, body, foot);
+    if (appealBox) li.appendChild(appealBox);
+    li.appendChild(thread);
     return li;
   }
 
