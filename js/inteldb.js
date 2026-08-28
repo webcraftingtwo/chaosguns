@@ -98,6 +98,49 @@ const intelDB = (() => {
     // inside the session blob by setSession below.
     let pendingToken = null;
 
+    /* The unwrapped ECDH private key lives in memory for this page
+       only — never localStorage, never the wire. A page reload seals
+       the vault again until the operator re-enters their passphrase. */
+    let identity = null;   // { privateKey, publicKey }
+
+    /**
+     * Make sure this operator has an identity keypair and that we
+     * hold the unwrapped private key. Called with the passphrase in
+     * hand (login/enlist) or later when unsealing.
+     */
+    async function openVault(token, passphrase) {
+      const vault = await rpc('get_vault', { p_token: token });
+      if (!vault.ok) return vault;
+
+      if (!vault.hasKeys) {
+        // first contact for this operator: mint and register
+        const minted = await DDCrypto.mintIdentity(passphrase);
+        const reg = await rpc('register_keys', {
+          p_token: token,
+          p_public_key: minted.publicKey,
+          p_vault_blob: minted.vaultBlob,
+          p_vault_iv: minted.vaultIv,
+          p_vault_salt: minted.vaultSalt,
+        });
+        if (!reg.ok) return reg;
+        identity = { privateKey: minted.privateKey, publicKey: minted.publicKey };
+        return { ok: true, minted: true };
+      }
+
+      try {
+        const vaultKey = await DDCrypto.deriveVaultKey(passphrase, vault.vaultSalt);
+        identity = {
+          privateKey: await DDCrypto.unwrapPrivate(vault.vaultBlob, vault.vaultIv, vaultKey),
+          publicKey: vault.publicKey,
+        };
+        return { ok: true };
+      } catch {
+        // wrong passphrase for this vault, or a vault minted under an
+        // older passphrase (recovery mints a fresh one)
+        return { ok: false, code: 'VAULT_SEALED' };
+      }
+    }
+
     async function rpc(fn, args) {
       try {
         const res = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${fn}`, {
@@ -126,21 +169,141 @@ const intelDB = (() => {
 
     return {
       async enlistOperator(callsign, passphrase) {
-        return acceptAuth(await rpc('enlist_operator', {
-          p_callsign: callsign, p_passphrase: passphrase,
+        // the server is given a derived secret, never the passphrase
+        const secret = await DDCrypto.deriveAuthSecret(callsign, passphrase);
+        const res = acceptAuth(await rpc('enlist_operator', {
+          p_callsign: callsign, p_passphrase: secret,
         }));
+        if (res.ok) await openVault(pendingToken, passphrase);
+        return res;
       },
 
       async authenticate(callsign, passphrase) {
-        return acceptAuth(await rpc('authenticate_operator', {
-          p_callsign: callsign, p_passphrase: passphrase,
+        const secret = await DDCrypto.deriveAuthSecret(callsign, passphrase);
+        let res = acceptAuth(await rpc('authenticate_operator', {
+          p_callsign: callsign, p_passphrase: secret,
         }));
+
+        // Accounts predating derived auth still hold a hash of the raw
+        // passphrase. Accept it once, then migrate the credential so
+        // the server stops holding anything passphrase-shaped.
+        if (!res.ok && res.code === 'CREDENTIALS_REJECTED') {
+          const legacy = acceptAuth(await rpc('authenticate_operator', {
+            p_callsign: callsign, p_passphrase: passphrase,
+          }));
+          if (legacy.ok) {
+            await rpc('rekey_passphrase', { p_token: pendingToken, p_new_secret: secret });
+            res = legacy;
+          }
+        }
+
+        if (res.ok) await openVault(pendingToken, passphrase);
+        return res;
       },
 
       async recoverWithCipher(callsign, cipher, newPassphrase) {
-        return acceptAuth(await rpc('recover_operator', {
-          p_callsign: callsign, p_cipher: cipher, p_new_passphrase: newPassphrase,
+        const secret = await DDCrypto.deriveAuthSecret(callsign, newPassphrase);
+        const res = acceptAuth(await rpc('recover_operator', {
+          p_callsign: callsign, p_cipher: cipher, p_new_passphrase: secret,
         }));
+        if (res.ok) {
+          // the old vault was sealed with the lost passphrase and can
+          // never be opened again: mint a fresh identity and say so
+          const minted = await DDCrypto.mintIdentity(newPassphrase);
+          const reg = await rpc('register_keys', {
+            p_token: pendingToken,
+            p_public_key: minted.publicKey,
+            p_vault_blob: minted.vaultBlob,
+            p_vault_iv: minted.vaultIv,
+            p_vault_salt: minted.vaultSalt,
+          });
+          if (reg.ok) {
+            identity = { privateKey: minted.privateKey, publicKey: minted.publicKey };
+            res.keysReplaced = true;
+          }
+        }
+        return res;
+      },
+
+      /* ---- message drop ---- */
+
+      vaultOpen() { return Boolean(identity); },
+
+      /** Re-open the vault after a reload, with the passphrase re-entered. */
+      async unsealVault(passphrase) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return openVault(session.token, passphrase);
+      },
+
+      async myFingerprint() {
+        if (!identity) return null;
+        return DDCrypto.fingerprint(identity.publicKey);
+      },
+
+      async sendMessage(recipient, text) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        if (!identity) return { ok: false, code: 'VAULT_SEALED' };
+
+        const keyRes = await rpc('get_public_key', {
+          p_token: session.token, p_callsign: recipient,
+        });
+        if (!keyRes.ok) return keyRes;
+
+        const key = await DDCrypto.conversationKey(identity.privateKey, keyRes.publicKey);
+        const sealed = await DDCrypto.encryptFor(key, text);
+        return rpc('send_message', {
+          p_token: session.token,
+          p_recipient: recipient,
+          p_ciphertext: sealed.ciphertext,
+          p_iv: sealed.iv,
+        });
+      },
+
+      /** Fetches ciphertext and decrypts it here, in the browser. */
+      async getMessages() {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        const res = await rpc('get_messages', { p_token: session.token });
+        if (!res.ok) return res;
+        if (!identity) return { ok: true, sealed: true, unread: res.unread, messages: [] };
+
+        const out = [];
+        for (const m of res.messages || []) {
+          let body;
+          try {
+            const key = await DDCrypto.conversationKey(identity.privateKey, m.counterpartKey);
+            body = await DDCrypto.decryptFrom(key, m.ciphertext, m.iv);
+          } catch {
+            // their key changed (recovery) — this one is gone for good
+            body = null;
+          }
+          out.push({
+            id: m.id, mine: m.mine, counterpart: m.counterpart,
+            createdAt: m.createdAt, readAt: m.readAt, body,
+          });
+        }
+        return { ok: true, sealed: false, unread: res.unread, messages: out };
+      },
+
+      async markMessageRead(id) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('mark_message_read', { p_token: session.token, p_id: id });
+      },
+
+      async hideMessage(id) {
+        const session = getSession();
+        if (!session?.token) return { ok: false, code: 'SESSION_INVALID' };
+        return rpc('hide_message', { p_token: session.token, p_id: id });
+      },
+
+      async operatorFingerprint(callsign) {
+        const session = getSession();
+        if (!session?.token) return null;
+        const r = await rpc('get_public_key', { p_token: session.token, p_callsign: callsign });
+        return r.ok ? DDCrypto.fingerprint(r.publicKey) : null;
       },
 
       async getDossier() {
@@ -260,6 +423,7 @@ const intelDB = (() => {
 
       clearSession() {
         const session = getSession();
+        identity = null; // the vault seals with the session
         dropSession();
         if (session?.token) {
           rpc('terminate_session', { p_token: session.token }); // fire and forget
@@ -272,6 +436,32 @@ const intelDB = (() => {
      MOCK BACKEND — localStorage (offline fallback)
      ============================================================ */
   function mockBackend() {
+    /* same in-memory-only rule as the live backend */
+    let mockIdentity = null;
+
+    async function mockOpenVault(db, record, passphrase) {
+      if (!record.publicKey) {
+        const minted = await DDCrypto.mintIdentity(passphrase);
+        record.publicKey = minted.publicKey;
+        record.vaultBlob = minted.vaultBlob;
+        record.vaultIv = minted.vaultIv;
+        record.vaultSalt = minted.vaultSalt;
+        saveDB(db);
+        mockIdentity = { privateKey: minted.privateKey, publicKey: minted.publicKey };
+        return { ok: true, minted: true };
+      }
+      try {
+        const vaultKey = await DDCrypto.deriveVaultKey(passphrase, record.vaultSalt);
+        mockIdentity = {
+          privateKey: await DDCrypto.unwrapPrivate(record.vaultBlob, record.vaultIv, vaultKey),
+          publicKey: record.publicKey,
+        };
+        return { ok: true };
+      } catch {
+        return { ok: false, code: 'VAULT_SEALED' };
+      }
+    }
+
     function loadDB() {
       try {
         return JSON.parse(localStorage.getItem(DB_KEY)) || { operators: {} };
@@ -370,6 +560,7 @@ const intelDB = (() => {
         };
         db.operators[key] = record;
         saveDB(db);
+        await mockOpenVault(db, record, passphrase);
         return { ok: true, dossier: shapeDossier(toRaw(record)), cipher };
       },
 
@@ -380,6 +571,7 @@ const intelDB = (() => {
         if ((await passDigest(callsign, passphrase)) !== record.passHash) {
           return { ok: false, code: 'CREDENTIALS_REJECTED' };
         }
+        await mockOpenVault(db, record, passphrase);
         return { ok: true, dossier: shapeDossier(toRaw(record)) };
       },
 
@@ -909,11 +1101,110 @@ const intelDB = (() => {
         return { ok: true, dossier: shapeDossier(toRaw(me)) };
       },
 
+      /* ---- message drop (same crypto, local store) ---- */
+
+      vaultOpen() { return Boolean(mockIdentity); },
+
+      async unsealVault(passphrase) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        return mockOpenVault(db, me, passphrase);
+      },
+
+      async myFingerprint() {
+        return mockIdentity ? DDCrypto.fingerprint(mockIdentity.publicKey) : null;
+      },
+
+      async sendMessage(recipient, text) {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        if (!mockIdentity) return { ok: false, code: 'VAULT_SEALED' };
+        const to = db.operators[String(recipient).trim().toLowerCase()];
+        if (!to) return { ok: false, code: 'CALLSIGN_NOT_ON_FILE' };
+        if (to.id === me.id) return { ok: false, code: 'SELF_ADDRESSED' };
+        if (!to.publicKey) return { ok: false, code: 'NO_KEYS' };
+        const key = await DDCrypto.conversationKey(mockIdentity.privateKey, to.publicKey);
+        const sealed = await DDCrypto.encryptFor(key, text);
+        db.messages = db.messages || [];
+        db.messages.push({
+          id: `m-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          senderId: me.id, recipientId: to.id,
+          ciphertext: sealed.ciphertext, iv: sealed.iv,
+          createdAt: Date.now(), readAt: null,
+        });
+        saveDB(db);
+        return { ok: true };
+      },
+
+      async getMessages() {
+        const db = loadDB();
+        const me = Object.values(db.operators).find(
+          (r) => r.id === getSession()?.operatorId
+        );
+        if (!me) return { ok: false, code: 'SESSION_INVALID' };
+        const rows = (db.messages || [])
+          .filter((m) => m.senderId === me.id || m.recipientId === me.id)
+          .sort((a, b) => b.createdAt - a.createdAt);
+        const unread = rows.filter((m) => m.recipientId === me.id && !m.readAt).length;
+        if (!mockIdentity) return { ok: true, sealed: true, unread, messages: [] };
+
+        const byId = (id) => Object.values(db.operators).find((r) => r.id === id);
+        const out = [];
+        for (const m of rows) {
+          const other = byId(m.senderId === me.id ? m.recipientId : m.senderId);
+          let body = null;
+          try {
+            const key = await DDCrypto.conversationKey(mockIdentity.privateKey, other.publicKey);
+            body = await DDCrypto.decryptFrom(key, m.ciphertext, m.iv);
+          } catch { body = null; }
+          out.push({
+            id: m.id, mine: m.senderId === me.id,
+            counterpart: other ? other.callsign : 'UNKNOWN',
+            createdAt: m.createdAt, readAt: m.readAt, body,
+          });
+        }
+        return { ok: true, sealed: false, unread, messages: out };
+      },
+
+      async markMessageRead(id) {
+        const db = loadDB();
+        const meId = getSession()?.operatorId;
+        const m = (db.messages || []).find((x) => x.id === id);
+        if (m && m.recipientId === meId && !m.readAt) {
+          m.readAt = Date.now();
+          saveDB(db);
+        }
+        return { ok: true };
+      },
+
+      async hideMessage(id) {
+        const db = loadDB();
+        const meId = getSession()?.operatorId;
+        db.messages = (db.messages || []).filter(
+          (m) => !(m.id === id && (m.senderId === meId || m.recipientId === meId))
+        );
+        saveDB(db);
+        return { ok: true };
+      },
+
+      async operatorFingerprint(callsign) {
+        const db = loadDB();
+        const op = db.operators[String(callsign).trim().toLowerCase()];
+        return op?.publicKey ? DDCrypto.fingerprint(op.publicKey) : null;
+      },
+
       setSession(operatorId, callsign) {
         writeSession({ operatorId, callsign });
       },
 
       clearSession() {
+        mockIdentity = null;
         dropSession();
       },
     };
@@ -952,6 +1243,16 @@ const intelDB = (() => {
     reinstateIntel: (fileId) => backend.reinstateIntel(fileId),
     getActivity: (limit) => backend.getActivity(limit),
     getTasking: () => backend.getTasking(),
+
+    /* message drop — see js/crypto.js for the threat model */
+    vaultOpen: () => backend.vaultOpen(),
+    unsealVault: (passphrase) => backend.unsealVault(passphrase),
+    myFingerprint: () => backend.myFingerprint(),
+    sendMessage: (to, text) => backend.sendMessage(to, text),
+    getMessages: () => backend.getMessages(),
+    markMessageRead: (id) => backend.markMessageRead(id),
+    hideMessage: (id) => backend.hideMessage(id),
+    operatorFingerprint: (callsign) => backend.operatorFingerprint(callsign),
     getDispatches: () => backend.getDispatches(),
     issueCompartmentKey: () => backend.issueCompartmentKey(),
     redeemCompartmentKey: (code) => backend.redeemCompartmentKey(code),
