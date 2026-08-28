@@ -73,6 +73,12 @@
     BAD_APPEAL: 'APPEAL MUST RUN 10–500 CHARACTERS',
     NO_APPEAL: 'NO APPEAL ON FILE FOR THIS DROP',
     ALREADY_REINSTATED: 'YOU HAVE ALREADY BACKED THIS APPEAL',
+    VAULT_SEALED: 'VAULT SEALED — WRONG PASSPHRASE, OR RE-KEYED AFTER RECOVERY',
+    SELF_ADDRESSED: 'YOU CANNOT DROP A MESSAGE TO YOURSELF',
+    NO_KEYS: 'THAT OPERATOR HAS NOT OPENED A CIPHER VAULT YET',
+    BAD_MESSAGE: 'MESSAGE REJECTED BY THE RELAY',
+    RATE_LIMITED: 'SENDING TOO FAST — 20 PER HOUR',
+    NOT_YOURS: 'NOT YOUR MESSAGE',
     CONFLICTED: 'YOU CANNOT BOTH CONFIRM AND BURN A DROP',
     ALREADY_BURNED: 'ALREADY BURNED BY YOU',
     INSUFFICIENT_CLEARANCE: 'INSUFFICIENT CLEARANCE',
@@ -463,9 +469,10 @@
       }
     }
 
-    /* --- tasking + ticker (independent; never block the reveal) --- */
+    /* --- tasking, ticker, unread count (never block the reveal) --- */
     renderTasking();
     renderTicker();
+    refreshDropBadge();
 
     /* --- materialize --- */
     el.dossier.classList.remove('hidden');
@@ -1753,6 +1760,189 @@
   }
 
   /* ============================================================
+     MESSAGE DROP — end-to-end encrypted operator mail
+     ============================================================ */
+
+  const dropEl = $('#drop');
+
+  async function refreshDropBadge() {
+    const badge = $('#drop-badge');
+    const res = await intelDB.getMessages();
+    if (!res.ok || !res.unread) {
+      badge.hidden = true;
+      return;
+    }
+    badge.hidden = false;
+    badge.textContent = String(res.unread);
+  }
+
+  async function openDrop() {
+    el.dossier.classList.add('hidden');
+    dropEl.classList.remove('hidden');
+    window.scrollTo(0, 0);
+
+    const blocks = dropEl.querySelectorAll('.decrypt');
+    blocks.forEach((b) => b.classList.remove('decrypted'));
+    FX.staggerIn(blocks, 110);
+
+    await renderDrop();
+  }
+
+  function closeDrop() {
+    dropEl.classList.add('hidden');
+    el.dossier.classList.remove('hidden');
+    refreshDropBadge();
+  }
+
+  async function renderDrop() {
+    const sealed = !intelDB.vaultOpen();
+    $('#seal-panel').hidden = !sealed;
+    $('#drop-grid').hidden = sealed;
+
+    if (sealed) {
+      $('#m-fingerprint').textContent = 'CIPHER ████ ████';
+      $('#seal-pass').value = '';
+      $('#seal-msg').textContent = '';
+      return;
+    }
+
+    const fp = await intelDB.myFingerprint();
+    $('#m-fingerprint').textContent = fp ? `YOUR CIPHER ${fp}` : 'CIPHER —';
+
+    const list = $('#m-list');
+    list.innerHTML = '';
+    const res = await intelDB.getMessages();
+    if (!res.ok) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = MESSAGES[res.code] || 'RELAY UNREACHABLE — DROP DARK.';
+      list.appendChild(li);
+      return;
+    }
+
+    $('#m-count').textContent = res.messages.length
+      ? `${res.messages.length} ON FILE${res.unread ? ` // ${res.unread} UNREAD` : ''}`
+      : '';
+
+    if (!res.messages.length) {
+      const li = document.createElement('li');
+      li.className = 'feed-empty';
+      li.textContent = 'THE DROP IS EMPTY. NOTHING LEFT FOR YOU, NOTHING LEFT BY YOU.';
+      list.appendChild(li);
+      return;
+    }
+
+    for (const m of res.messages) list.appendChild(messageRow(m));
+
+    // opening the drop marks what you can read as read
+    for (const m of res.messages) {
+      if (!m.mine && !m.readAt) await intelDB.markMessageRead(m.id);
+    }
+    refreshDropBadge();
+  }
+
+  function messageRow(m) {
+    const li = document.createElement('li');
+    li.className = 'msg ' + (m.mine ? 'outbound' : 'inbound') +
+      (!m.mine && !m.readAt ? ' unread' : '');
+
+    const head = document.createElement('div');
+    head.className = 'msg-head';
+    head.append(span('msg-dir', m.mine ? 'SENT' : 'RECEIVED'));
+    head.append(document.createTextNode(m.mine ? 'TO ' : 'FROM '));
+    const who = span('msg-who', m.counterpart.toUpperCase());
+    who.classList.add('link');
+    who.title = 'OPEN OPERATOR FILE';
+    who.style.cursor = 'pointer';
+    who.addEventListener('click', () => openProfile(m.counterpart, 'drop'));
+    head.append(who);
+    if (!m.mine && !m.readAt) head.append(span('msg-new', 'NEW'));
+    head.append(span('msg-when', fmtAgo(m.createdAt)));
+
+    const body = document.createElement('div');
+    if (m.body === null) {
+      body.className = 'msg-body lost';
+      body.textContent =
+        'UNREADABLE — THIS OPERATOR RE-KEYED AFTER RECOVERY. THE PLAINTEXT IS GONE FOR GOOD.';
+    } else {
+      body.className = 'msg-body';
+      body.textContent = m.body;
+    }
+
+    const foot = document.createElement('div');
+    foot.className = 'msg-foot';
+    const burn = document.createElement('button');
+    burn.type = 'button';
+    burn.className = 'msg-burn';
+    burn.textContent = 'BURN';
+    let armed = false;
+    burn.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        burn.textContent = 'CONFIRM BURN?';
+        setTimeout(() => { armed = false; burn.textContent = 'BURN'; }, 3500);
+        return;
+      }
+      burn.disabled = true;
+      await intelDB.hideMessage(m.id);
+      await renderDrop();
+    });
+    foot.appendChild(burn);
+
+    li.append(head, body, foot);
+    return li;
+  }
+
+  function dropMsg(text, ok = false) {
+    const m = $('#m-msg');
+    m.classList.toggle('ok', ok);
+    m.textContent = text ? (ok ? text : `✕ ${text}`) : '';
+  }
+
+  async function onSendMessage() {
+    const to = $('#m-to').value.trim();
+    const body = $('#m-body').value.trim();
+    if (!to) return dropMsg('NAME A RECIPIENT CALLSIGN');
+    if (body.length < 1) return dropMsg('NOTHING TO SEND');
+    if (body.length > 2000) return dropMsg('MESSAGE RUNS LONGER THAN 2000 CHARACTERS');
+
+    const btn = $('#m-send');
+    btn.disabled = true;
+    dropMsg('… ENCRYPTING AND TRANSMITTING', true);
+    try {
+      const res = await intelDB.sendMessage(to, body);
+      if (!res.ok) return dropMsg(MESSAGES[res.code] || 'RELAY ERROR — TRY AGAIN');
+      $('#m-body').value = '';
+      dropMsg(`SEALED AND DELIVERED TO ${to.toUpperCase()} — ONLY THEY CAN OPEN IT`, true);
+      await renderDrop();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function onUnseal() {
+    const pass = $('#seal-pass').value;
+    const msg = $('#seal-msg');
+    msg.classList.remove('ok');
+    if (!pass) { msg.textContent = '✕ PASSPHRASE REQUIRED'; return; }
+    const btn = $('#seal-open');
+    btn.disabled = true;
+    msg.classList.add('ok');
+    msg.textContent = '… DERIVING KEY';
+    try {
+      const res = await intelDB.unsealVault(pass);
+      if (!res.ok) {
+        msg.classList.remove('ok');
+        msg.textContent = `✕ ${MESSAGES[res.code] || 'VAULT WOULD NOT OPEN'}`;
+        return;
+      }
+      await renderDrop();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  /* ============================================================
      OPERATOR FILE (profile)
      ============================================================ */
 
@@ -1762,6 +1952,7 @@
   function currentView() {
     if (!archiveEl.classList.contains('hidden')) return 'archive';
     if (!rosterEl.classList.contains('hidden')) return 'roster';
+    if (!dropEl.classList.contains('hidden')) return 'drop';
     if (!profileEl.classList.contains('hidden')) return profileReturn; // burrow no deeper
     return 'dossier';
   }
@@ -1771,6 +1962,7 @@
     el.dossier.classList.add('hidden');
     archiveEl.classList.add('hidden');
     rosterEl.classList.add('hidden');
+    dropEl.classList.add('hidden');
     profileEl.classList.remove('hidden');
     if (!soft) window.scrollTo(0, 0);
 
@@ -1812,6 +2004,36 @@
       stats.append(span('p-burns', ` // ${p.burnsReceived} UNDER BURN NOTICE`));
     }
 
+    // their cipher fingerprint, for verifying keys off-network, plus a
+    // shortcut into the drop addressed to them
+    if (!p.me) {
+      const line = document.createElement('div');
+      line.className = 'id-row fingerprint';
+      const fp = await intelDB.operatorFingerprint(p.callsign);
+      if (fp) {
+        line.append(document.createTextNode('CIPHER '), (() => {
+          const b = document.createElement('b');
+          b.textContent = fp;
+          return b;
+        })(), document.createTextNode(' — CONFIRM IT WITH THEM OFF-NETWORK'));
+      } else {
+        line.append(document.createTextNode('NO CIPHER VAULT — THIS OPERATOR CANNOT RECEIVE MESSAGES YET'));
+      }
+      const send = document.createElement('button');
+      send.type = 'button';
+      send.className = 'ck-btn';
+      send.style.marginLeft = '12px';
+      send.textContent = 'MESSAGE';
+      send.addEventListener('click', async () => {
+        profileEl.classList.add('hidden');
+        await openDrop();
+        $('#m-to').value = p.callsign;
+        $('#m-body').focus();
+      });
+      if (fp) line.appendChild(send);
+      stats.parentElement.appendChild(line);
+    }
+
     $('#p-record-count').textContent =
       `${res.files.length} FILE${res.files.length === 1 ? '' : 'S'} // GATED AT YOUR CLEARANCE`;
 
@@ -1840,7 +2062,10 @@
 
   async function closeProfile() {
     profileEl.classList.add('hidden');
-    if (profileReturn === 'archive') {
+    if (profileReturn === 'drop') {
+      dropEl.classList.remove('hidden');
+      await renderDrop();
+    } else if (profileReturn === 'archive') {
       archiveEl.classList.remove('hidden');
       await refreshFeed(); // pick up any confirms/burns made from the profile
     } else if (profileReturn === 'roster') {
@@ -1958,6 +2183,7 @@
     archiveEl.classList.add('hidden');
     rosterEl.classList.add('hidden');
     profileEl.classList.add('hidden');
+    dropEl.classList.add('hidden');
     el.gate.classList.remove('hidden');
     el.inPass.value = '';
     el.inConfirm.value = '';
@@ -2015,6 +2241,11 @@
   $('#btn-roster').addEventListener('click', openRoster);
   $('#btn-roster-back').addEventListener('click', closeRoster);
   $('#btn-profile-back').addEventListener('click', closeProfile);
+  $('#btn-drop').addEventListener('click', openDrop);
+  $('#btn-drop-back').addEventListener('click', closeDrop);
+  $('#m-send').addEventListener('click', onSendMessage);
+  $('#seal-open').addEventListener('click', onUnseal);
+  $('#seal-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') onUnseal(); });
 
   // ENTER anywhere in the gate submits (no <form>, no page reload).
   [el.inCallsign, el.inPass, el.inConfirm, el.inCipher].forEach((input) =>
